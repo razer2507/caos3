@@ -1,0 +1,396 @@
+======================================================================
+CAOS 3.0 - GUIA DE INSTALACION, EJECUCION Y PRUEBAS
+======================================================================
+
+Esta guia es para Windows (PowerShell). Todos los comandos se ejecutan
+uno por uno, desde la carpeta raiz del proyecto.
+
+Carpeta del proyecto:
+C:\Users\Usuario\Documents\Proyecto predeterminado
+
+Si ya tienes creado el entorno .venv y las dependencias instaladas,
+puedes saltar directamente al PASO 6 (probar) o al PASO 7 (ejecutar).
+
+
+----------------------------------------------------------------------
+PASO 0. Abrir PowerShell en la carpeta del proyecto
+----------------------------------------------------------------------
+
+1) Abre PowerShell.
+
+2) Entra a la carpeta del proyecto:
+
+cd "C:\Users\Usuario\Documents\Proyecto predeterminado"
+
+3) Confirma que estas en la carpeta correcta (debe aparecer main.py):
+
+Get-ChildItem
+
+4) Comprueba que Python esta instalado:
+
+python --version
+
+Debe mostrar Python 3.10 o superior. Si el comando anterior falla,
+prueba con:
+
+py --version
+
+Nota: si usas "py", reemplaza "python" por "py" al crear el entorno
+virtual en el PASO 1.
+
+
+----------------------------------------------------------------------
+PASO 1. Crear el entorno virtual
+----------------------------------------------------------------------
+
+python -m venv .venv
+
+Si ya existe la carpeta .venv, este comando no rompe nada; puedes
+continuar. Tarda unos segundos y crea un Python aislado para el
+proyecto.
+
+
+----------------------------------------------------------------------
+PASO 2. Usar el Python del entorno virtual
+----------------------------------------------------------------------
+
+Opcion A (recomendada, no requiere activar nada):
+
+.\.venv\Scripts\python.exe --version
+
+Debe mostrar la misma version de Python.
+
+Opcion B (activar el entorno en la sesion actual):
+
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+
+Si la activacion funciona, el prompt suele mostrar "(.venv)".
+En el resto de esta guia se usa la Opcion A, que funciona siempre:
+
+.\.venv\Scripts\python.exe
+
+
+----------------------------------------------------------------------
+PASO 3. Actualizar pip
+----------------------------------------------------------------------
+
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+
+Es opcional, pero evita problemas al instalar paquetes.
+
+
+----------------------------------------------------------------------
+PASO 4. Instalar las dependencias
+----------------------------------------------------------------------
+
+Para ejecutar la app Y correr las pruebas (recomendado):
+
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+
+Este comando instala:
+- flet 1.1.0            (interfaz)
+- flet-audio 1.1.0      (sonido de exito)
+- requests              (cliente HTTP para Turso)
+- flet-desktop 1.1.0    (ventana de escritorio)
+- pytest                (pruebas)
+- pillow                (solo para el script de capturas)
+
+Si solo quieres ejecutar la app, sin pruebas ni capturas:
+
+.\.venv\Scripts\python.exe -m pip install -r requirements-desktop.txt
+
+Es normal ver muchas lineas "Requirement already satisfied" si ya
+estaba instalado. Espera a que termine sin errores.
+
+
+----------------------------------------------------------------------
+PASO 5. Verificar que las dependencias cargan
+----------------------------------------------------------------------
+
+.\.venv\Scripts\python.exe -c "import flet, flet_audio, requests, pytest, PIL; print('Dependencias OK')"
+
+Resultado esperado:
+
+Dependencias OK
+
+
+----------------------------------------------------------------------
+PASO 6. Ejecutar las pruebas automaticas
+----------------------------------------------------------------------
+
+.\.venv\Scripts\python.exe -m pytest
+
+Resultado esperado (la linea final):
+
+...................................................................      [100%]
+106 passed in ...
+
+Si quieres ver el nombre de cada prueba:
+
+.\.venv\Scripts\python.exe -m pytest -v
+
+Probar solo un archivo:
+
+.\.venv\Scripts\python.exe -m pytest tests\test_tarea_service.py -v
+
+Probar solo un archivo de modelos:
+
+.\.venv\Scripts\python.exe -m pytest tests\test_tarea_model.py -v
+
+Ver la lista de pruebas sin ejecutarlas:
+
+.\.venv\Scripts\python.exe -m pytest --collect-only
+
+Si alguna prueba falla, pytest mostrara el archivo, la linea y el
+error exacto. No necesitas base de datos real: las pruebas usan
+bases temporales.
+
+
+----------------------------------------------------------------------
+PASO 7. Ejecutar la aplicacion
+----------------------------------------------------------------------
+
+.\.venv\Scripts\python.exe main.py
+
+Se abre una ventana de escritorio llamada "CAOS 3.0".
+La terminal queda ocupada mientras la app esta abierta.
+Para cerrarla: cierra la ventana o pulsa Ctrl+C en la terminal.
+
+Al arrancar veras un log parecido a:
+
+INFO | caos: CAOS 3.0 iniciado. Base de datos: C:\Users\...
+       \.caos\caos_local.db
+
+Ese es el archivo SQLite local. Se crea solo la primera vez.
+
+
+----------------------------------------------------------------------
+PASO 8. Prueba manual rapida (2 minutos)
+----------------------------------------------------------------------
+
+Dentro de la app:
+
+1) En "Nueva tarea", escribe: Comprar cafe
+2) Pulsa el boton + o Enter.
+3) La tarea aparece con prioridad 1 (Importante y urgente).
+4) Marca su checkbox.
+   Debes notar: sonido de exito, la tarjeta se ilumina en verde y la
+   barra "Progreso de hoy" sube su porcentaje.
+5) Ve a "Proyectos" con la barra inferior.
+6) Pulsa el boton + (o el icono de ajustes) y crea un proyecto con
+   fecha limite.
+7) Vuelve a "Tareas", crea otra tarea y asignale ese proyecto desde
+   el dialogo de creacion (icono de ajustes).
+8) Ve a "Notas", crea una nota y buscala con el campo "Buscar".
+9) Pulsa el icono de nube de la cabecera para abrir "Sincronizacion".
+   Sin configurar Turso debe indicar "Turso no configurado".
+
+
+----------------------------------------------------------------------
+PASO 9. Usar una base de datos desechable (opcional)
+----------------------------------------------------------------------
+
+Util si quieres probar sin tocar tu base real:
+
+$env:CAOS_DB_PATH = "$env:TEMP\caos_prueba.db"
+
+.\.venv\Scripts\python.exe main.py
+
+Al terminar, cierra la app y limpia la variable de la sesion:
+
+Remove-Item Env:\CAOS_DB_PATH
+
+Y si quieres borrar ese archivo de prueba:
+
+Remove-Item "$env:TEMP\caos_prueba.db" -ErrorAction SilentlyContinue
+
+Orden de rutas que usa la app:
+1. CAOS_DB_PATH (si esta definida)
+2. FLET_APP_STORAGE_DATA\caos_local.db (Android/iOS)
+3. ~\.caos\caos_local.db (escritorio)
+
+
+----------------------------------------------------------------------
+PASO 10. Probar la sincronizacion con Turso (opcional)
+----------------------------------------------------------------------
+
+Necesitas una base Turso y un token. Define las variables SOLO en la
+sesion actual de PowerShell:
+
+$env:TURSO_DATABASE_URL = "libsql://tu-base.turso.io"
+$env:TURSO_AUTH_TOKEN = "tu-token-real"
+
+.\.venv\Scripts\python.exe main.py
+
+Dentro de la app:
+1) Pulsa el icono de nube.
+2) Debe decir "Conexion con Turso lista".
+3) Pulsa "Sincronizar ahora" (o espera: la sincronizacion automatica
+   sube cada cambio local unos 2 segundos despues, revisa Internet
+   cada 2 minutos, hace una pasada final al pasar a segundo plano o
+   cerrar y tambien sincroniza al volver a la app).
+4) Espera el mensaje "Listo. N registros sincronizados".
+
+Si creas una tarea en el PC y cierras la app enseguida, la pasada final
+la sube antes de que se cierre la ventana. En el movil, al abrir la app,
+la primera pasada (~1 segundo) la baja a la base local.
+
+La sincronizacion automatica solo funciona mientras la app esta abierta.
+Si Android mata la app sin avisar, los cambios pendientes se suben en el
+siguiente arranque. Si no hay Internet, la sonda de red lo detecta y se
+reintenta en la siguiente pasada.
+
+Si falla, el dialogo mostrara el error de red o de credenciales.
+La app sigue funcionando offline.
+
+Al terminar, limpia las variables:
+
+Remove-Item Env:\TURSO_DATABASE_URL
+Remove-Item Env:\TURSO_AUTH_TOKEN
+
+
+----------------------------------------------------------------------
+PASO 11. Capturas automaticas de la interfaz (opcional, Windows)
+----------------------------------------------------------------------
+
+Requiere Pillow (incluido en requirements-dev.txt).
+Ejecuta este comando con la app cerrada:
+
+.\.venv\Scripts\python.exe scripts\capture_ui.py
+
+El script crea una base temporal de demostracion, abre su propia
+ventana, guarda 6 imagenes y cierra la ventana. Resultado esperado:
+
+Guardado ...\artifacts\01_tareas.png (575x775)
+Guardado ...\artifacts\02_proyectos.png (575x775)
+Guardado ...\artifacts\03_notas.png (575x775)
+Guardado ...\artifacts\04_dialogo_tarea.png (575x775)
+Guardado ...\artifacts\05_dialogo_proyecto.png (575x775)
+Guardado ...\artifacts\06_sync.png (575x775)
+
+Verifica los archivos:
+
+Get-ChildItem artifacts
+
+
+----------------------------------------------------------------------
+PASO 12. Regenerar el sonido de exito (opcional)
+----------------------------------------------------------------------
+
+.\.venv\Scripts\python.exe scripts\generate_sound.py
+
+Resultado esperado:
+
+Generado ...\assets\sounds\success.wav (... bytes)
+
+Este script solo usa la libreria estandar de Python.
+
+
+----------------------------------------------------------------------
+RESUMEN: TODOS LOS COMANDOS EN ORDEN
+----------------------------------------------------------------------
+
+cd "C:\Users\Usuario\Documents\Proyecto predeterminado"
+python --version
+python -m venv .venv
+.\.venv\Scripts\python.exe --version
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -c "import flet, flet_audio, requests, pytest, PIL; print('Dependencias OK')"
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe main.py
+
+
+----------------------------------------------------------------------
+SOLUCION DE PROBLEMAS
+----------------------------------------------------------------------
+
+[1] "python no se reconoce como un comando..."
+    Instala Python desde https://www.python.org/downloads/
+    Marca la opcion "Add Python to PATH" durante la instalacion.
+    Si existe el lanzador "py", usa:
+    py -m venv .venv
+
+[2] "no se puede cargar el archivo Activate.ps1 porque la ejecucion
+    de scripts esta deshabilitada"
+    Usa el Python del entorno directamente, sin activar:
+    .\.venv\Scripts\python.exe main.py
+
+    O habilita solo para esta sesion:
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+[3] "ModuleNotFoundError: No module named 'src'"
+    Estas ejecutando el archivo desde otra carpeta. Entra a la raiz:
+    cd "C:\Users\Usuario\Documents\Proyecto predeterminado"
+    Y ejecuta:
+    .\.venv\Scripts\python.exe main.py
+
+[4] "ModuleNotFoundError: No module named 'flet_desktop'"
+    Falta el cliente de escritorio:
+    .\.venv\Scripts\python.exe -m pip install -r requirements-desktop.txt
+
+[5] "ModuleNotFoundError: No module named 'flet_audio'"
+    Falta el paquete de audio:
+    .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+[6] No se escucha el sonido al completar una tarea
+    Revisa el volumen de Windows y que el archivo exista:
+    Test-Path assets\sounds\success.wav
+    Si el audio de Flet falla, la app intenta un pitido del sistema.
+    La tarea se completa igual aunque no haya sonido.
+
+[7] Error de base de datos bloqueada
+    Cierra todas las ventanas de CAOS abiertas y vuelve a intentar.
+    Para pruebas, usa una base desechable (PASO 9).
+    Nunca borres caos_local.db si tienes datos que no has sincronizado.
+
+[8] El comando "flet" pide instalar flet-cli y falla al compilar PyYAML
+    Ese CLI solo se necesita para compilar el APK de Android.
+    Para escritorio NO lo necesitas: usa "python main.py".
+    Si necesitas compilar el APK con Python muy nuevo (3.14/3.15),
+    usa Python 3.12 o 3.13, o instala Microsoft C++ Build Tools.
+
+[9] Las capturas salen con un rectangulo gris
+    Era un bug de layout ya corregido (expand dentro de un Row con
+    wrap). Actualiza el codigo y vuelve a ejecutar:
+    .\.venv\Scripts\python.exe scripts\capture_ui.py
+
+[10] "pip" no tiene conexion
+    Comprueba internet/proxy y vuelve a intentar el PASO 4.
+    Tambien puedes forzar una descarga limpia:
+    .\.venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements-dev.txt
+
+
+----------------------------------------------------------------------
+COMPILAR PARA ANDROID (OPCIONAL)
+----------------------------------------------------------------------
+
+Esto NO es necesario para probar la app en PC.
+
+.\.venv\Scripts\python.exe -m pip install flet-cli==1.1.0
+.\.venv\Scripts\flet.exe build apk
+
+Notas:
+- Requiere el toolchain de Android/Flutter que pida Flet.
+- No agregues flet-desktop al entorno de compilacion del APK.
+- Con Python 3.14/3.15, PyYAML puede necesitar Visual C++ Build Tools.
+  Si aparece ese error, usa Python 3.12/3.13 para compilar.
+
+
+----------------------------------------------------------------------
+EJECUTAR EN macOS / LINUX (REFERENCIA)
+----------------------------------------------------------------------
+
+cd "/ruta/al/proyecto"
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
+python -m pytest
+python main.py
+
+
+======================================================================
+FIN DE LA GUIA
+======================================================================

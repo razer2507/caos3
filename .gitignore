@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Datos locales
+caos_local.db
+caos_local.db-shm
+caos_local.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Flet
+build/
+dist/
+.flet/
+
+# Entorno
+.env
