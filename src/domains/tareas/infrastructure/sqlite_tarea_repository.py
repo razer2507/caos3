@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Mapping, Sequence
 
 from src.domains.tareas.application.ports import TareaRepository
@@ -11,19 +11,20 @@ from src.domains.tareas.models.value_objects import Prioridad
 from src.shared.infrastructure.database import Database
 
 _COLUMNAS = (
-    "id, titulo, descripcion, prioridad, completada, deadline_id, "
+    "id, titulo, descripcion, prioridad, completada, deadline_id, fecha, "
     "deleted, synced, created_at, updated_at"
 )
 
 _UPSERT = f"""
 INSERT INTO tareas ({_COLUMNAS})
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     titulo       = excluded.titulo,
     descripcion  = excluded.descripcion,
     prioridad    = excluded.prioridad,
     completada   = excluded.completada,
     deadline_id  = excluded.deadline_id,
+    fecha        = excluded.fecha,
     deleted      = excluded.deleted,
     synced       = excluded.synced,
     updated_at   = excluded.updated_at
@@ -119,6 +120,7 @@ class SqliteTareaRepository(TareaRepository):
             int(tarea.prioridad),
             int(tarea.completada),
             tarea.deadline_id,
+            tarea.fecha.isoformat() if tarea.fecha else None,
             int(tarea.deleted),
             int(tarea.synced),
             tarea.created_at.isoformat(),
@@ -134,6 +136,7 @@ class SqliteTareaRepository(TareaRepository):
             prioridad=Prioridad.desde(row["prioridad"]),
             completada=bool(row["completada"]),
             deadline_id=row["deadline_id"],
+            fecha=date.fromisoformat(row["fecha"]) if row["fecha"] else None,
             deleted=bool(row["deleted"]),
             synced=bool(row["synced"]),
             created_at=datetime.fromisoformat(row["created_at"]),

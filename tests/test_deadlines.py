@@ -8,6 +8,7 @@ import pytest
 
 from src.domains.deadlines.models.deadline import Deadline
 from src.shared.domain.errors import ErrorDeValidacion, NoEncontrado
+from src.shared.domain.periodos import Periodo
 
 
 HOY = date(2026, 11, 5)
@@ -105,3 +106,35 @@ def test_operar_sobre_deadline_inexistente(deadlines):
         deadlines.completar("no-existe")
     with pytest.raises(NoEncontrado):
         deadlines.eliminar("no-existe")
+
+
+def test_resumen_filtra_por_periodo(deadlines):
+    hoy = date(2026, 11, 5)  # jueves
+    deadlines.crear("Hoy", fecha_limite=hoy)
+    deadlines.crear("Semana", fecha_limite=date(2026, 11, 3))
+    deadlines.crear("Otro mes", fecha_limite=date(2026, 12, 1))
+    deadlines.crear("Sin fecha")
+
+    diario = deadlines.resumen(periodo=Periodo.DIARIO, hoy=hoy)
+    semanal = deadlines.resumen(periodo=Periodo.SEMANAL, hoy=hoy)
+    mensual = deadlines.resumen(periodo=Periodo.MENSUAL, hoy=hoy)
+
+    assert [r.deadline.titulo for r in diario] == ["Hoy"]
+    assert len(semanal) == 2
+    assert len(mensual) == 2
+
+
+def test_resumen_sin_periodo_devuelve_todos(deadlines):
+    deadlines.crear("Con fecha", fecha_limite=date(2026, 11, 5))
+    deadlines.crear("Sin fecha")
+    assert len(deadlines.resumen()) == 2
+
+
+def test_resumen_filtra_por_rango_de_fechas(deadlines):
+    deadlines.crear("Antes", fecha_limite=date(2026, 11, 1))
+    deadlines.crear("Dentro", fecha_limite=date(2026, 11, 7))
+    deadlines.crear("Después", fecha_limite=date(2026, 11, 20))
+    deadlines.crear("Sin fecha")
+
+    en_plazo = deadlines.resumen(desde=date(2026, 11, 5), hasta=date(2026, 11, 10))
+    assert [r.deadline.titulo for r in en_plazo] == ["Dentro"]

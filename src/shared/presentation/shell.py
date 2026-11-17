@@ -293,7 +293,7 @@ class AppShell(ft.Column):
                 content=ft.Column(
                     tight=True,
                     spacing=10,
-                    width=320,
+                    width=400,
                     height=380,
                     scroll=ft.ScrollMode.AUTO,
                     controls=[

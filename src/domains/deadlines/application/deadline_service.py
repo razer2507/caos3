@@ -15,6 +15,7 @@ from src.shared.application.events import (
     TAREAS_CAMBIADAS,
 )
 from src.shared.domain.errors import NoEncontrado
+from src.shared.domain.periodos import Periodo, dentro, en_rango
 
 
 @dataclass(frozen=True)
@@ -127,11 +128,24 @@ class DeadlineService:
         hechas = sum(1 for t in tareas if t.completada)
         return ProgresoDeadline(hechas=hechas, total=len(tareas))
 
-    def resumen(self, *, incluir_completados: bool = True) -> list[ResumenDeadline]:
-        return [
-            ResumenDeadline(d, self.progreso(d.id))
-            for d in self._repo.list_all(incluir_completados=incluir_completados)
-        ]
+    def resumen(
+        self,
+        *,
+        incluir_completados: bool = True,
+        periodo: Periodo | None = None,
+        hoy: date | None = None,
+        desde: date | None = None,
+        hasta: date | None = None,
+    ) -> list[ResumenDeadline]:
+        """Resúmenes de proyectos; filtra por ``[desde, hasta]`` o ``periodo``."""
+        deadlines = self._repo.list_all(incluir_completados=incluir_completados)
+        if desde is not None or hasta is not None:
+            deadlines = [
+                d for d in deadlines if en_rango(d.fecha_limite, desde, hasta)
+            ]
+        elif periodo is not None:
+            deadlines = [d for d in deadlines if dentro(d.fecha_limite, periodo, hoy)]
+        return [ResumenDeadline(d, self.progreso(d.id)) for d in deadlines]
 
     # ------------------------------------------------------------- helpers
     def _obtener(self, deadline_id: str) -> Deadline:

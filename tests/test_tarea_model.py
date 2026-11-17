@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from src.domains.tareas.models.tarea import Tarea
 from src.domains.tareas.models.value_objects import Prioridad
 from src.shared.domain.errors import ErrorDeValidacion
+from src.shared.domain.periodos import Periodo
 
 
 def test_id_es_uuid_v4_generado_en_la_app():
@@ -108,3 +110,26 @@ def test_borrado_logico_es_idempotente():
     tarea.marcar_eliminada()
     assert tarea.deleted is True
     assert tarea.updated_at == primera_fecha
+
+
+def test_fecha_iso_se_convierte():
+    tarea = Tarea(titulo="Con fecha", fecha="2026-12-24")
+    assert tarea.fecha == date(2026, 12, 24)
+
+
+def test_actualizar_fecha_marca_sincronizacion():
+    tarea = Tarea(titulo="Planificar", synced=True)
+    tarea.actualizar(fecha=date(2026, 11, 5))
+    assert tarea.fecha == date(2026, 11, 5)
+    assert tarea.synced is False
+
+
+def test_en_periodo_sin_fecha_siempre_falso():
+    tarea = Tarea(titulo="Sin fecha")
+    assert tarea.en_periodo(Periodo.DIARIO, date(2026, 11, 5)) is False
+
+
+def test_en_periodo_detecta_el_dia():
+    tarea = Tarea(titulo="Hoy", fecha=date(2026, 11, 5))
+    assert tarea.en_periodo(Periodo.DIARIO, date(2026, 11, 5)) is True
+    assert tarea.en_periodo(Periodo.DIARIO, date(2026, 11, 6)) is False

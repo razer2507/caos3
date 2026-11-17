@@ -143,11 +143,11 @@ python -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-Resultado esperado de las pruebas: **106 passed**.
+Resultado esperado de las pruebas: **135 passed**.
 
 ### Dónde se guardan tus datos
 
-La ruta se decide en `src/shared/infrastructure/database.py:64-82`, en este orden:
+La ruta se decide en `src/shared/infrastructure/database.py:71-89`, en este orden:
 
 1. Si existe la variable `CAOS_DB_PATH`, se usa esa ruta.
 2. Si existe `FLET_APP_STORAGE_DATA` (Android/iOS), se usa `caos_local.db` dentro de esa carpeta.
@@ -255,6 +255,7 @@ Proyecto predeterminado/
 │   │   ├── domain/
 │   │   │   ├── entity.py           Base de toda entidad (id, fechas, deleted, synced)
 │   │   │   ├── errors.py           Jerarquía de errores controlados
+│   │   │   ├── periodos.py         Vistas por periodo (diario/semanal/mensual)
 │   │   │   └── value_objects.py    Value Object Titulo
 │   │   ├── application/
 │   │   │   ├── event_bus.py        Publicador/suscriptor síncrono
@@ -300,6 +301,7 @@ Proyecto predeterminado/
 │   ├── test_auto_sync.py
 │   ├── test_connectivity.py
 │   ├── test_settings_repository.py
+│   ├── test_periodos.py
 │   └── test_event_bus.py
 │
 ├── scripts/
@@ -373,18 +375,19 @@ Nadie necesita saber quién más está escuchando.
 
 Estos recorridos son la mejor forma de entender cómo encajan las piezas.
 
-### 6.1 Crear una tarea rápida
+### 6.1 Crear una tarea desde el formulario
 
-1. El usuario escribe en el campo y pulsa Enter o el botón `+` (`tareas_view.py:50-55`, `84-96`).
-2. `_crear_rapida` (`tareas_view.py:116-127`) lee el texto, comprueba que no esté vacío y llama a `self.ctx.tareas.crear(...)`.
-3. `TareaService.crear` (`tarea_service.py:45-60`) crea una `Tarea`.
-4. El constructor de `Tarea` (`tarea.py:24-30`) valida el título con `Titulo`, normaliza la prioridad y la descripción.
-5. `Entity` ya le dio un `id` UUID v4, `created_at`, `updated_at`, `synced=False` y `deleted=False` (`entity.py:20-30`).
-6. El servicio llama a `repo.add(tarea)`.
-7. `SqliteTareaRepository.add` ejecuta el `_UPSERT` (`sqlite_tarea_repository.py:18-30`, `40-41`).
-8. El servicio publica `TAREAS_CAMBIADAS` y `DATOS_CAMBIADOS` (`tarea_service.py:144-146`).
-9. Las vistas suscritas se refrescan. La barra de progreso se actualiza.
-10. La UI limpia el campo (`tareas_view.py:126-127`).
+1. El usuario pulsa el botón `+` del encabezado (`tareas_view.py:91-96`). Ya no existe el campo de agregado rápido: toda creación pasa por el formulario completo.
+2. `_abrir_dialogo` (`tareas_view.py:365-452`) construye el diálogo con título, descripción, prioridad Eisenhower, proyecto y fecha.
+3. La fecha se precarga con `date.today()` cuando la tarea es nueva (`tareas_view.py:394-396`); al editar se conserva `tarea.fecha`.
+4. Al guardar, `guardar` lee los campos y llama a `self.ctx.tareas.crear(...)` o `.editar(...)`.
+5. `TareaService.crear` (`tarea_service.py:45-60`) crea una `Tarea`.
+6. El constructor de `Tarea` (`tarea.py:24-30`) valida el título con `Titulo`, normaliza la prioridad y la descripción.
+7. `Entity` ya le dio un `id` UUID v4, `created_at`, `updated_at`, `synced=False` y `deleted=False` (`entity.py:20-30`).
+8. El servicio llama a `repo.add(tarea)`.
+9. `SqliteTareaRepository.add` ejecuta el `_UPSERT` (`sqlite_tarea_repository.py:18-30`, `40-41`).
+10. El servicio publica `TAREAS_CAMBIADAS` y `DATOS_CAMBIADOS` (`tarea_service.py:144-146`).
+11. Las vistas suscritas se refrescan. La barra de progreso se actualiza y el diálogo se cierra con `page.pop_dialog()`.
 
 ### 6.2 Completar una tarea y ver la recompensa
 
@@ -647,6 +650,25 @@ Exception
 
 ---
 
+### 8.5.1 `src/shared/domain/periodos.py` — las vistas por periodo
+
+**Propósito:** definir de una sola vez qué significa "diario", "semanal" y "mensual" y compartirlo entre tareas y proyectos, para no duplicar aritmética de calendario.
+
+| Líneas | Explicación |
+|---|---|
+| 21-32 | `class Periodo(str, Enum)`: `DIARIO`, `MANANA`, `SEMANAL`, `MENSUAL`. Al heredar de `str`, se puede comparar con cadenas y usarlo como valor del menú de fechas. |
+| 26-28 | Propiedad `etiqueta`: devuelve "Diario", "Semanal" o "Mensual". |
+| 41-55 | `rango(periodo, hoy)`: devuelve `(inicio, fin)` ambos incluidos. Diario es el mismo día; semanal va del lunes (`hoy - weekday()`) al domingo; mensual, del día 1 al último del mes. |
+| 58-63 | `dentro(fecha, periodo, hoy)`: `True` si `fecha` cae en el rango; `None` nunca entra. |
+
+**Por qué la semana empieza en lunes:** `date.weekday()` devuelve 0 para lunes. Restando `weekday()` días a *hoy* se obtiene el lunes de esa semana; sumando 6, el domingo. Es la semana ISO, la que espera un usuario español.
+
+**Por qué el mes no usa `month % 12 + 1`:** para el último día se calcula el primer día del mes siguiente (`(inicio + timedelta(days=31)).replace(day=1)`) y se resta un día. Así funciona en meses de 28, 29, 30 y 31 días y no hay que codificar una tabla.
+
+**Quién lo usa:** `Tarea.en_periodo` y `DeadlineService.resumen` (filtrando por `fecha_limite`), y los `selector_periodo` de las dos vistas. Las tareas o proyectos sin fecha quedan fuera de cualquier periodo: solo aparecen con "Todas".
+
+---
+
 ### 8.6 `src/shared/application/events.py` — nombres de eventos
 
 **Propósito:** evitar "strings mágicos" repartidos por el código.
@@ -694,17 +716,27 @@ Exception
 
 **Propósito:** abrir una sola conexión SQLite, crear el esquema y ofrecer métodos seguros para ejecutar consultas.
 
-#### Constante `SCHEMA` (líneas 11-61)
+#### Constante `SCHEMA` (líneas 11-65)
 
 | Líneas | Explicación |
 |---|---|
 | 12 | `PRAGMA journal_mode = WAL`: modo write-ahead log. |
 | 13 | `PRAGMA foreign_keys = ON`: activa las claves foráneas. En SQLite hay que activarlo en **cada** conexión. |
 | 15-26 | Tabla `deadlines`: id, título, descripción, fecha límite, área, completado, deleted, synced, created_at, updated_at. |
-| 28-39 | Tabla `tareas`: añade `prioridad` y `deadline_id` con `REFERENCES deadlines(id) ON DELETE SET NULL`. |
-| 41-51 | Tabla `notas`: contenido y `deadline_id`. |
-| 53-58 | Índices para acelerar búsquedas por deadline, por `synced` y por `completada`. |
-| 60 | `PRAGMA user_version = 1`: versión del esquema, útil para futuras migraciones. |
+| 28-40 | Tabla `tareas`: añade `prioridad`, `deadline_id` con `REFERENCES deadlines(id) ON DELETE SET NULL` y `fecha`. |
+| 42-52 | Tabla `notas`: contenido y `deadline_id`. |
+| 54-57 | Tabla `settings`: clave/valor para credenciales de Turso y ajustes. |
+| 59-64 | Índices para acelerar búsquedas por deadline, por `synced` y por `completada`. |
+| 67-68 | `VERSION_ESQUEMA = 4`: versión actual. La fija `Database._migrar`, no el `SCHEMA`. |
+
+#### `Database._migrar()` (líneas 110-134)
+
+| Líneas | Explicación |
+|---|---|
+| 122 | Lee `user_version` **antes** de escribirla (el `SCHEMA` no la fija). |
+| 124-126 | Añade `fecha` a `tareas` si falta (bases anteriores a v3). |
+| 128-132 | Backfill v4: `UPDATE ... SET fecha = substr(created_at, 1, 10) WHERE fecha IS NULL`. |
+| 134 | Fija `PRAGMA user_version = VERSION_ESQUEMA`. |
 
 **Sobre `ON DELETE SET NULL`:** si algún día se borrara físicamente un deadline, SQLite pondría `NULL` en sus tareas. En esta app el borrado es lógico (`deleted=1`), así que ese `ON DELETE` casi nunca se dispara; por eso `DeadlineService.eliminar` desvincula las tareas manualmente.
 
@@ -878,7 +910,7 @@ Diferencias con el esquema local:
 | Constante | Líneas | Qué trae |
 |---|---|---|
 | `SELECT_DEADLINES` | 73-77 | Todas las columnas de `deadlines`, incluidas `deleted` y `synced`. |
-| `SELECT_TAREAS` | 79-83 | Ídem para `tareas`, con `prioridad`, `completada` y `deadline_id`. |
+| `SELECT_TAREAS` | 80-84 | Ídem para `tareas`, con `prioridad`, `completada`, `deadline_id` y `fecha`. |
 | `SELECT_NOTAS` | 85-89 | Ídem para `notas`, con `contenido`. |
 
 **Por qué se incluyen `deleted` y `synced`:** el *pull* necesita saber si un registro se borró en otro dispositivo y debe dejar la fila local como sincronizada para no volver a subirla.
@@ -888,7 +920,7 @@ Diferencias con el esquema local:
 | Constante | Líneas | Detalle |
 |---|---|---|
 | `UPSERT_DEADLINE` | 92-107 | Inserta 10 columnas; `synced` va fijo a `1`; en conflicto actualiza todo menos `created_at`, solo si la versión entrante es más nueva. |
-| `UPSERT_TAREA` | 109-124 | Igual, con `prioridad`, `completada` y `deadline_id`. |
+| `UPSERT_TAREA` | 110-126 | Igual, con `prioridad`, `completada`, `deadline_id` y `fecha`. |
 | `UPSERT_NOTA` | 126-140 | Igual, con `contenido`. |
 
 **Por qué `synced = 1` directamente en el SQL remoto:** la columna existe en el esquema remoto por compatibilidad, pero para la nube todos los registros que llegan están, por definición, sincronizados. El valor `0/1` que importa para la app es el **local**.
@@ -1060,8 +1092,13 @@ Diferencias con el esquema local:
 | 117-127 | `chip()`: etiqueta con icono opcional, fondo translúcido y texto del color indicado. |
 | 130-148 | `estado_vacio()`: icono grande, título y subtítulo centrados, con padding vertical 44. |
 | 151-158 | `tarjeta()`: contenedor con fondo, radio 16, borde sutil y padding configurable (14 por defecto). |
-| 161-194 | `campo_texto()`: `TextField` con label, valor, hint, multilínea, estilos de foco y colores del tema. |
-| 197-221 | `selector()`: `Dropdown` con las mismas convenciones visuales. |
+| 161-204 | `campo_texto()`: `TextField` con label, valor, hint, multilínea, estilos de foco y colores del tema. |
+| 207-233 | `selector()`: `Dropdown` con las mismas convenciones visuales y `on_change` opcional. |
+| 236-300 | `selector_fecha()`: campo de solo lectura + botones de calendario/borrar; guarda la elección en el diccionario `holder` y abre un `DatePicker`. Lo comparten las vistas de tareas y proyectos. |
+| 303-366 | `selector_periodo()`: `PopupMenuButton` que abre un menú **vertical** con las opciones de fecha. El `content` muestra la opción activa y una flecha; los ítems llaman a `on_change(valor)`. |
+| 368-382 | `actualizar_selector_periodo()`: sincroniza la etiqueta visible cuando el periodo cambia por código (por ejemplo, al quitar un rango personalizado o al escribir "Plazo"). |
+
+**Por qué un menú vertical y no un `SegmentedButton`:** el pill horizontal ocupaba demasiado ancho en móvil y no dejaba sitio al resto de la barra. El `PopupMenuButton` muestra solo la opción activa y despliega las demás verticalmente al pulsarlo. `selector_periodo` acepta `valor` y `opciones`, de modo que cada vista define su opción por defecto: **Tareas = Diaria** y **Proyectos = Semanal**.
 
 **Detalle de `hace_cuanto` (línea 62):** `datetime.now(momento.tzinfo)` crea un "ahora" con la **misma zona horaria** que el momento recibido. Si hicieras `datetime.now()` sin argumento y el momento tiene `tzinfo`, Python lanzaría `TypeError: can't subtract offset-naive and offset-aware datetimes`.
 
@@ -1208,29 +1245,30 @@ Diferencias con el esquema local:
 
 #### 8.17.2 `src/domains/tareas/models/tarea.py` — la entidad Tarea
 
-**Propósito:** contener las reglas de una tarea: título válido, prioridad válida, estado completado/pendiente, vínculo opcional a un proyecto y actualización selectiva de campos.
+**Propósito:** contener las reglas de una tarea: título válido, prioridad válida, estado completado/pendiente, fecha opcional para la vista por periodo, vínculo opcional a un proyecto y actualización selectiva de campos.
 
 | Líneas | Explicación |
 |---|---|
 | 1 | Docstring: RF01–RF04. |
-| 5 | Importa `dataclass`. |
-| 6 | Importa `Final`. |
-| 8 | Importa `Prioridad` y `Titulo`. |
-| 9 | Importa `Entity`. |
-| 11 | `SIN_CAMBIO = object()`: centinela único. |
-| 14-15 | `@dataclass class Tarea(Entity)`: hereda id, fechas, synced y deleted. |
-| 18 | `titulo: str`. |
-| 19 | `prioridad: Prioridad = Prioridad.IMPORTANTE_URGENTE`. |
-| 20 | `descripcion: str = ""`. |
-| 21 | `completada: bool = False`. |
-| 22 | `deadline_id: str | None = None`. |
-| 24-30 | `__post_init__`: valida el título (`Titulo(...).valor`), limpia la descripción, normaliza la prioridad, convierte completada a `bool` y limpia el deadline (si queda vacío, `None`). |
-| 33-39 | `completar()`: si ya estaba completada, devuelve `False` (no hay transición). Si no, marca, toca la entidad y devuelve `True`. |
-| 41-47 | `reabrir()`: lo contrario; también idempotente. |
-| 49-55 | `alternar()`: invierte el estado y devuelve el nuevo valor. |
-| 58-96 | `actualizar(...)`: recibe los cuatro campos editables con `SIN_CAMBIO` por defecto. Solo modifica los que se pasaron. Compara el valor nuevo con el actual; si es distinto, lo asigna y marca `cambios = True`. Al final, si hubo algún cambio, llama a `_touch()`. |
-| 98-99 | `vincular_deadline(id)`: atajo de `actualizar(deadline_id=id)`. |
-| 101-102 | `desvincular_deadline()`: atajo de `actualizar(deadline_id=None)`. |
+| 5-6 | Importa `dataclass` y `Final`. |
+| 7 | Importa `date`. |
+| 9-11 | Importa `Prioridad` y `Titulo`, `Entity` y `Periodo`/`dentro`. |
+| 13 | `SIN_CAMBIO = object()`: centinela único. |
+| 16-17 | `@dataclass class Tarea(Entity)`: hereda id, fechas, synced y deleted. |
+| 20 | `titulo: str`. |
+| 21 | `prioridad: Prioridad = Prioridad.IMPORTANTE_URGENTE`. |
+| 22 | `descripcion: str = ""`. |
+| 23 | `completada: bool = False`. |
+| 24 | `deadline_id: str | None = None`. |
+| 25 | `fecha: date | None = None`. |
+| 27-36 | `__post_init__`: valida el título (`Titulo(...).valor`), limpia la descripción, normaliza la prioridad, convierte completada a `bool`, limpia el deadline (si queda vacío, `None`) y convierte `fecha` de texto ISO a `date`. |
+| 38-44 | `completar()`: si ya estaba completada, devuelve `False` (no hay transición). Si no, marca, toca la entidad y devuelve `True`. |
+| 46-52 | `reabrir()`: lo contrario; también idempotente. |
+| 54-60 | `alternar()`: invierte el estado y devuelve el nuevo valor. |
+| 62-65 | `en_periodo(periodo, hoy)`: delega en `dentro(self.fecha, ...)` para saber si la tarea entra en la vista diaria/semanal/mensual. |
+| 68-115 | `actualizar(...)`: recibe los cinco campos editables con `SIN_CAMBIO` por defecto. Solo modifica los que se pasaron. Compara el valor nuevo con el actual; si es distinto, lo asigna y marca `cambios = True`. Al final, si hubo algún cambio, llama a `_touch()`. |
+| 117-118 | `vincular_deadline(id)`: atajo de `actualizar(deadline_id=id)`. |
+| 120-121 | `desvincular_deadline()`: atajo de `actualizar(deadline_id=None)`. |
 
 **El patrón `SIN_CAMBIO` explicado con un ejemplo:**
 
@@ -1275,7 +1313,7 @@ Si el valor por defecto de `deadline_id` fuera `None`, no se podría distinguir 
 
 ### 8.19 Dominio `tareas`: casos de uso
 
-#### `src/domains/tareas/application/tarea_service.py` (146 líneas)
+#### `src/domains/tareas/application/tarea_service.py` (162 líneas)
 
 **Propósito:** ofrecer las operaciones que la UI necesita y coordinar modelo, repositorio y eventos.
 
@@ -1295,23 +1333,23 @@ Si el valor por defecto de `deadline_id` fuera `None`, no se podría distinguir 
 
 **Efecto secundario esperado:** si creas una tarea nueva, el denominador sube y el porcentaje baja. Es correcto: tienes más trabajo pendiente.
 
-##### Clase `TareaService` (líneas 37-146)
+##### Clase `TareaService` (líneas 38-162)
 
 | Líneas | Explicación |
 |---|---|
-| 40-42 | `__init__`: recibe el repositorio y el bus; los guarda como `_repo` y `_bus`. |
-| 45-60 | `crear`: construye `Tarea`, la guarda, notifica y la devuelve. |
-| 62-80 | `editar`: obtiene la tarea (lanza `NoEncontrado` si no existe), llama a `actualizar`, guarda, notifica y devuelve. |
-| 82-87 | `completar`: si `tarea.completar()` devuelve `True` (hubo transición), guarda y notifica. Si ya estaba completada, no hace nada. |
-| 89-94 | `reabrir`: análogo. |
-| 96-101 | `alternar`: siempre guarda y notifica, porque el estado cambia. |
-| 103-106 | `eliminar`: comprueba que exista y llama a `repo.delete` (soft delete). |
-| 109-110 | `obtener`: devuelve la tarea o lanza `NoEncontrado`. |
-| 112-113 | `listar`: delega en el repo. |
-| 115-120 | `listar_por_deadline`: delega. |
-| 122-135 | `progreso_diario`: lista todas, cuenta las completadas cuyo `updated_at` convertido a hora local cae en `hoy`, cuenta las pendientes y devuelve `ProgresoDiario`. |
-| 138-142 | `_obtener`: helper que lanza `NoEncontrado` con un mensaje claro. |
-| 144-146 | `_notificar`: publica `TAREAS_CAMBIADAS` y luego `DATOS_CAMBIADOS`. |
+| 41-43 | `__init__`: recibe el repositorio y el bus; los guarda como `_repo` y `_bus`. |
+| 46-63 | `crear`: construye `Tarea` (acepta `deadline_id` y `fecha` opcionales), la guarda, notifica y la devuelve. |
+| 65-85 | `editar`: obtiene la tarea (lanza `NoEncontrado` si no existe), llama a `actualizar` (incluido `fecha`), guarda, notifica y devuelve. |
+| 87-92 | `completar`: si `tarea.completar()` devuelve `True` (hubo transición), guarda y notifica. Si ya estaba completada, no hace nada. |
+| 94-99 | `reabrir`: análogo. |
+| 101-106 | `alternar`: siempre guarda y notifica, porque el estado cambia. |
+| 108-111 | `eliminar`: comprueba que exista y llama a `repo.delete` (soft delete). |
+| 114-115 | `obtener`: devuelve la tarea o lanza `NoEncontrado`. |
+| 117-128 | `listar`: delega en el repo; si se pasa `periodo`, filtra con `Tarea.en_periodo(periodo, hoy)` (las tareas sin fecha quedan fuera). |
+| 130-135 | `listar_por_deadline`: delega. |
+| 137-151 | `progreso_diario`: lista todas, cuenta las completadas cuyo `updated_at` convertido a hora local cae en `hoy`, cuenta las pendientes y devuelve `ProgresoDiario`. |
+| 153-157 | `_obtener`: helper que lanza `NoEncontrado` con un mensaje claro. |
+| 159-162 | `_notificar`: publica `TAREAS_CAMBIADAS` y luego `DATOS_CAMBIADOS`. |
 
 **Detalle de `progreso_diario` (línea 128):** `t.updated_at.astimezone().date() == hoy` convierte la marca UTC a la zona local del sistema antes de comparar. Si no se hiciera, una tarea completada a las 23:00 hora local podría contar como del día siguiente en UTC.
 
@@ -1325,35 +1363,35 @@ Si el valor por defecto de `deadline_id` fuera `None`, no se podría distinguir 
 
 ### 8.20 Dominio `tareas`: repositorio SQLite
 
-#### `src/domains/tareas/infrastructure/sqlite_tarea_repository.py` (141 líneas)
+#### `src/domains/tareas/infrastructure/sqlite_tarea_repository.py` (144 líneas)
 
 **Propósito:** implementar el puerto con SQLite.
 
-##### Constantes (líneas 13-30)
+##### Constantes (líneas 13-31)
 
 | Líneas | Explicación |
 |---|---|
-| 13-16 | `_COLUMNAS`: lista de columnas en el orden exacto que usarán `SELECT` y los parámetros. |
-| 18-30 | `_UPSERT`: inserta 10 valores; si el `id` ya existe, actualiza título, descripción, prioridad, completada, deadline, deleted, synced y updated_at. **No** actualiza `created_at`. |
+| 13-16 | `_COLUMNAS`: lista de columnas en el orden exacto que usarán `SELECT` y los parámetros (incluye `fecha` tras `deadline_id`). |
+| 18-31 | `_UPSERT`: inserta 11 valores; si el `id` ya existe, actualiza título, descripción, prioridad, completada, deadline, fecha, deleted, synced y updated_at. **No** actualiza `created_at`. |
 
 **Por qué `_UPSERT` se usa tanto para `add` como para `update`:** simplifica el código. En ambos casos el estado final es "esta fila debe quedar así". La base decide si inserta o actualiza. Para una app pequeña es más robusto que mantener dos sentencias separadas.
 
-##### Clase `SqliteTareaRepository` (líneas 33-141)
+##### Clase `SqliteTareaRepository` (líneas 34-144)
 
 | Líneas | Explicación |
 |---|---|
-| 36-37 | `__init__`: guarda la `Database`. |
-| 40-41 | `add`: ejecuta el upsert con `_params(tarea)`. |
-| 43-44 | `update`: idéntico. |
-| 46-51 | `delete`: lee la tarea; si no existe, no hace nada; si existe, llama a `marcar_eliminada()` y guarda. |
-| 53-60 | `mark_synced`: si la lista está vacía, sale; si no, genera tantos `?` como ids y ejecuta un `UPDATE ... WHERE id IN (...)`. |
-| 62-74 | `upsert_remoto`: aplica una fila del *pull*. Compara `updated_at`; si la local es igual o más nueva, no escribe y devuelve `False`. Si escribe, fuerza `synced=True` y devuelve `True`. |
-| 77-82 | `get`: busca por id y `deleted=0`; devuelve entidad o `None`. |
-| 84-89 | `list_all`: filtra `deleted=0`; si no se incluyen completadas, añade `completada=0`; ordena por completada, prioridad y creación descendente. |
-| 91-104 | `list_by_deadline`: si `deadline_id is None`, filtra `deadline_id IS NULL`; si no, `deadline_id = ?`. Añade el filtro de completadas y el mismo orden. |
-| 106-111 | `list_pending`: **no** filtra por `deleted`, para que los borrados también se suban. Ordena por `updated_at` ascendente. |
-| 114-127 | `_params`: convierte la entidad a tupla. Prioridad y booleanos van como enteros; fechas como ISO. |
-| 129-141 | `_fila_a_entidad`: convierte una fila SQLite (o un diccionario del *pull*) en `Tarea`, reconstruyendo enums, booleanos y fechas. |
+| 37-38 | `__init__`: guarda la `Database`. |
+| 41-42 | `add`: ejecuta el upsert con `_params(tarea)`. |
+| 44-45 | `update`: idéntico. |
+| 47-52 | `delete`: lee la tarea; si no existe, no hace nada; si existe, llama a `marcar_eliminada()` y guarda. |
+| 54-61 | `mark_synced`: si la lista está vacía, sale; si no, genera tantos `?` como ids y ejecuta un `UPDATE ... WHERE id IN (...)`. |
+| 63-76 | `upsert_remoto`: aplica una fila del *pull*. Compara `updated_at`; si la local es igual o más nueva, no escribe y devuelve `False`. Si escribe, fuerza `synced=True` y devuelve `True`. |
+| 78-83 | `get`: busca por id y `deleted=0`; devuelve entidad o `None`. |
+| 85-90 | `list_all`: filtra `deleted=0`; si no se incluyen completadas, añade `completada=0`; ordena por completada, prioridad y creación descendente. |
+| 92-105 | `list_by_deadline`: si `deadline_id is None`, filtra `deadline_id IS NULL`; si no, `deadline_id = ?`. Añade el filtro de completadas y el mismo orden. |
+| 107-113 | `list_pending`: **no** filtra por `deleted`, para que los borrados también se suban. Ordena por `updated_at` ascendente. |
+| 115-129 | `_params`: convierte la entidad a tupla. Prioridad y booleanos van como enteros; `fecha` va como ISO o `None`. |
+| 131-144 | `_fila_a_entidad`: convierte una fila SQLite (o un diccionario del *pull*) en `Tarea`, reconstruyendo enums, booleanos y fechas (incluida `fecha` con `date.fromisoformat`). |
 
 **Seguridad contra inyección SQL:** los valores siempre van como parámetros (`?`), no concatenados en el texto. Los únicos fragmentos dinámicos son los marcadores de `mark_synced`, generados a partir de la **cantidad** de ids, no de su contenido.
 
@@ -1369,106 +1407,114 @@ Si el valor por defecto de `deadline_id` fuera `None`, no se podría distinguir 
 
 ### 8.21 Dominio `tareas`: la vista
 
-#### `src/domains/tareas/presentation/tareas_view.py` (366 líneas)
+#### `src/domains/tareas/presentation/tareas_view.py` (452 líneas)
 
-**Propósito:** mostrar la lista, permitir crear/editar/eliminar/completar y disparar la celebración.
+**Propósito:** mostrar la lista, permitir crear/editar/eliminar/completar, filtrar por periodo y disparar la celebración.
 
-##### Imports y clase (líneas 1-48)
+##### Imports y clase (líneas 1-45)
 
 - `logging` para registrar fallos de carga.
 - `flet as ft` para la UI.
 - `Tarea` y `Prioridad` para tipos y opciones.
 - `DEADLINES_CAMBIADOS` y `TAREAS_CAMBIADAS` para suscribirse.
 - `CaosError` para capturar errores de negocio.
+- `Periodo` para el filtro diario/semanal/mensual.
 - `AppContext` para acceder a los servicios.
 - Colores del tema.
-- Widgets reutilizables.
+- Widgets reutilizables (incluidos `selector_fecha`, `selector_periodo`, `actualizar_selector_periodo` y `fecha_corta`).
 - `class TareasView(ft.Column)`: la vista es una columna con scroll.
 
-##### Constructor (líneas 44-103)
+##### Constructor (líneas 51-123)
 
 | Líneas | Explicación |
 |---|---|
-| 45 | `super().__init__(expand=True, spacing=14, scroll=ft.ScrollMode.AUTO)`: ocupa el espacio y permite desplazarse. |
-| 46 | Guarda el contexto. |
-| 47 | `_filtro = "todas"`. |
-| 48 | `_celebrando = False`: evita refrescos durante la animación. |
-| 50-54 | Crea el campo de nueva tarea con `on_submit=self._crear_rapida` (Enter). |
-| 55 | `self._input.expand = True`: el campo ocupa el ancho disponible. |
-| 57-67 | `SegmentedButton` con tres filtros; no permite selección vacía ni múltiple. |
-| 69 | `_lista`: columna donde se van a insertar las tarjetas. |
-| 71-99 | `controls`: encabezado, fila de input + botón, filtros y lista. |
-| 101-102 | Se suscribe a cambios de tareas y de deadlines (si cambia un proyecto, hay que refrescar los chips). |
-| 103 | Primer refresco. |
+| 52 | `super().__init__(expand=True, spacing=14, scroll=ft.ScrollMode.AUTO)`: ocupa el espacio y permite desplazarse. |
+| 53 | Guarda el contexto. |
+| 54 | `_periodo = Periodo.DIARIO`: por defecto la lista muestra solo las tareas de hoy. |
+| 55-56 | `_desde` y `_hasta = None`: sin rango personalizado. |
+| 57 | `_celebrando = False`: evita refrescos durante la animación. |
+| 59-66 | `selector_periodo(...)`: menú vertical de fecha con "Todas / Diaria / Mañana", iniciado en `"diario"`. |
+| 67-84 | `_texto_rango` y `_barra_rango`: barra que aparece cuando se elige un plazo de fechas. |
+| 86 | `_lista`: columna donde se van a insertar las tarjetas. |
+| 88-123 | `controls`: encabezado con el botón `+`, fila de periodo (selector + botón de rango), barra de rango y lista. **No hay campo de agregado rápido**: crear siempre abre el formulario. |
+| 121-122 | Se suscribe a cambios de tareas y de deadlines (si cambia un proyecto, hay que refrescar los chips). |
+| 123 | Primer refresco, ya con la vista diaria aplicada. |
 
-**Detalle de `self._input.expand = True` (línea 55):** se asigna después de crear el campo porque `campo_texto` devuelve un `TextField` ya configurado; modificar `expand` fuera del constructor es válido.
+**Por qué el botón `+` abre el formulario completo:** se eliminó el input rápido para que toda tarea pase por las mismas validaciones y permita elegir descripción, prioridad, proyecto y fecha desde el principio. El botón del encabezado (`tareas_view.py:91-96`) llama a `_abrir_dialogo()` sin argumentos.
 
-**Detalle de `on_submit`:** en Flet, `on_submit` se dispara al pulsar Enter en un `TextField`. `_crear_rapida` acepta `_e=None`, así que sirve tanto para el botón como para el submit.
 
-##### Eventos (líneas 106-177)
+##### Eventos (líneas 126-228)
 
 | Líneas | Explicación |
 |---|---|
-| 106-108 | `_on_cambio`: si **no** se está celebrando, refresca. Si se está celebrando, ignora el evento para no cortar la animación. |
-| 110-114 | `_cambiar_filtro`: lee la selección y refresca. |
-| 116-127 | `_crear_rapida`: lee y limpia el texto; si está vacío, avisa; intenta crear; captura `CaosError` y muestra el mensaje; si todo va bien, limpia el input y actualiza. |
-| 129-146 | `_alternar`: activa `_celebrando`; llama a `completar` o `reabrir`; si hay error, avisa, desactiva la celebración y refresca; si se completó, lanza `_celebrar` como tarea; si se reabrió, desactiva y refresca. |
-| 148-153 | `_celebrar`: `await` de la animación; en `finally` desactiva la celebración y refresca, pase lo que pase. |
-| 155-177 | `_eliminar`: define `confirmar`, que cierra el diálogo y llama a `eliminar`; muestra un `AlertDialog` con Cancelar y Eliminar. |
+| 126-128 | `_on_cambio`: si **no** se está celebrando, refresca. Si se está celebrando, ignora el evento para no cortar la animación. |
+| 130-139 | `_cambiar_periodo(valor)`: recibe el valor elegido en el menú (no un evento), limpia el rango personalizado, traduce `"todas"` o un valor de `Periodo` a `self._periodo` y refresca. |
+| 141-147 | `_elegir_rango`: abre `abrir_selector_rango` con las fechas actuales. |
+| 149-162 | `_aplicar_rango`: guarda `desde`/`hasta`, desactiva el periodo, pone la etiqueta del menú en "Plazo" con `actualizar_selector_periodo`, muestra la barra y refresca. |
+| 164-171 | `_limpiar_rango`: borra el rango y vuelve a la vista **diaria**, tanto en `self._periodo` como en la etiqueta del selector. |
+| 173-178 | `_actualizar_filtros_ui`: actualiza la barra de rango si la vista ya está montada. La etiqueta del selector la actualiza `actualizar_selector_periodo`. |
+| 180-197 | `_alternar`: activa `_celebrando`; llama a `completar` o `reabrir`; si hay error, avisa, desactiva la celebración y refresca; si se completó, lanza `_celebrar` como tarea; si se reabrió, desactiva y refresca. |
+| 199-204 | `_celebrar`: `await` de la animación; en `finally` desactiva la celebración y refresca, pase lo que pase. |
+| 206-228 | `_eliminar`: define `confirmar`, que cierra el diálogo y llama a `eliminar`; muestra un `AlertDialog` con Cancelar y Eliminar. |
 
 **Por qué `_celebrando`:** al completar, el servicio publica eventos y la vista se refrescaría de inmediato, reconstruyendo las tarjetas y perdiendo la referencia al `Container` que se está animando. La bandera bloquea ese refresco hasta que la animación termina.
 
-**Por qué `finally` (línea 151):** si `effects.celebrar` lanza una excepción no controlada, la bandera quedaría en `True` para siempre y la vista dejaría de refrescarse. `finally` garantiza la limpieza.
+**Por qué `finally` (línea 203):** si `effects.celebrar` lanza una excepción no controlada, la bandera quedaría en `True` para siempre y la vista dejaría de refrescarse. `finally` garantiza la limpieza.
 
-**Por qué se usa `self.page.run_task` (línea 143):** `_celebrar` es `async`. Flet necesita que las corrutinas se ejecuten a través de su bucle de eventos. `run_task` las agenda sin bloquear.
+**Por qué se usa `self.page.run_task` (línea 196):** `_celebrar` es `async`. Flet necesita que las corrutinas se ejecuten a través de su bucle de eventos. `run_task` las agenda sin bloquear.
 
-##### Render (líneas 180-211)
+##### Render (líneas 231-279)
 
 | Líneas | Explicación |
 |---|---|
-| 180-185 | `refrescar`: intenta listar todas; si falla, registra y usa lista vacía. |
-| 187-190 | Aplica el filtro en memoria. |
-| 192 | Limpia la lista de controles. |
-| 193-200 | Si no hay tareas, elige un mensaje según el filtro y añade `estado_vacio`. |
-| 201-202 | Si hay tareas, crea una tarjeta por cada una. |
-| 206-211 | `_actualizar`: si `self.page` existe, actualiza solo la lista. |
+| 231-272 | `refrescar`: lista con `incluir_completadas=True`, `periodo=self._periodo`, `desde` y `hasta`; si falla, registra y usa lista vacía. |
+| 244 | Limpia la lista de controles. |
+| 245-267 | Si no hay tareas, muestra un `estado_vacio` distinto según haya un rango personalizado, un periodo activo o ningún filtro. |
+| 269-270 | Si hay tareas, crea una tarjeta por cada una. |
+| 274-279 | `_actualizar`: si `self.page` existe, actualiza solo la lista. |
 
-**Por qué se filtra en memoria y no en SQL:** ya se cargan todas las tareas para el progreso y para la lista; filtrar en Python evita consultas extra y mantiene el repositorio simple. Con miles de tareas habría que mover el filtro a SQL.
+**Por qué el filtrado por fecha va al servicio y no a la vista:** `TareaService.listar` recibe `periodo`/`desde`/`hasta` y aplica `Tarea.en_periodo` o `en_rango`. La vista solo pinta el resultado, así la misma regla se prueba sin UI.
 
 **Por qué `if self.page is not None`:** una vista puede construirse antes de estar montada en la página. Llamar a `update()` sin página lanzaría un error. Es una defensa habitual en Flet.
 
-##### Tarjeta de tarea (líneas 213-290)
+##### Tarjeta de tarea (líneas 281-362)
 
 | Líneas | Explicación |
 |---|---|
-| 214 | Crea el contenedor con `tarjeta(ft.Container(), padding=12)`. Se rellena después. |
-| 216-220 | Checkbox con el estado actual; `on_change` captura `t=tarea` y `c=contenedor` con valores por defecto. |
-| 222-234 | Título: tamaño 14.5, seminegrita; si está completada, color suave y tachado. |
-| 236 | Metadatos empiezan con la píldora de prioridad. |
-| 237-245 | Si tiene deadline, busca su título y añade un chip con icono de carpeta. |
-| 247-250 | `detalle`: título + fila de metadatos con `wrap=True` (los chips pasan a otra línea si no caben). |
-| 251-262 | Si hay descripción, se añade **en su propia línea** con `max_lines=1` y elipsis. |
-| 264-289 | Fila principal: checkbox, columna expandible con el detalle, botón editar y botón eliminar. |
-| 290 | Devuelve el contenedor. |
+| 282 | Crea el contenedor con `tarjeta(ft.Container(), padding=12)`. Se rellena después. |
+| 284-288 | Checkbox con el estado actual; `on_change` captura `t=tarea` y `c=contenedor` con valores por defecto. |
+| 290-302 | Título: tamaño 14.5, seminegrita; si está completada, color suave y tachado. |
+| 304 | Metadatos empiezan con la píldora de prioridad. |
+| 305-313 | Si tiene deadline, busca su título y añade un chip con icono de carpeta. |
+| 314-318 | Si tiene `fecha`, añade un chip con la fecha en formato corto (`fecha_corta`). |
+| 319-321 | `detalle`: título + fila de metadatos con `wrap=True` (los chips pasan a otra línea si no caben). |
+| 323-334 | Si hay descripción, se añade **en su propia línea** con `max_lines=1` y elipsis. |
+| 336-360 | Fila principal: checkbox, columna expandible con el detalle, botón editar y botón eliminar. |
+| 362 | Devuelve el contenedor. |
 
-**El bug importante que se corrigió (líneas 251-262):** antes, la descripción era un `Text` con `expand=True` dentro de un `Row(wrap=True)`. En Flutter, un hijo expandible dentro de un `Row` con `wrap` rompe las restricciones de layout y provoca el temido rectángulo gris de error. La solución fue sacar la descripción del `Row` y ponerla como una línea más de la columna. El comentario del código lo explica para que nadie lo vuelva a meter.
+**El bug importante que se corrigió (líneas 323-334):** antes, la descripción era un `Text` con `expand=True` dentro de un `Row(wrap=True)`. En Flutter, un hijo expandible dentro de un `Row` con `wrap` rompe las restricciones de layout y provoca el temido rectángulo gris de error. La solución fue sacar la descripción del `Row` y ponerla como una línea más de la columna. El comentario del código lo explica para que nadie lo vuelva a meter.
 
 **Por qué las lambdas usan `lambda e, t=tarea:`:** si escribieras `lambda e: self._alternar(tarea, ...)`, todas las lambdas del bucle capturarían la **última** `tarea` de la iteración. El valor por defecto `t=tarea` congela el valor de esa iteración. Es un error clásico de Python.
 
-##### Diálogo de creación/edición (líneas 293-366)
+##### Diálogo de creación/edición (líneas 365-452)
 
 | Líneas | Explicación |
 |---|---|
-| 294 | `es_edicion = tarea is not None`. |
-| 295 | Campo título, precargado si se edita. |
-| 296-301 | Campo descripción multilínea de 3 líneas. |
-| 303-306 | Genera opciones de prioridad: valor numérico y texto `"P1 · Importante y urgente (Hazlo ahora)"`. |
-| 307-311 | Selector de prioridad, con `"1"` por defecto. |
-| 313-320 | Carga deadlines y crea opciones; la primera es `("", "Sin proyecto")`. |
-| 322-345 | `guardar`: lee los campos, convierte prioridad y deadline, llama a `editar` o `crear`, captura `CaosError` y cierra el diálogo si todo va bien. |
-| 347-366 | Muestra el `AlertDialog` con los campos y los botones Cancelar/Guardar. |
+| 366 | `es_edicion = tarea is not None`. |
+| 367 | Campo título, precargado si se edita. |
+| 368-373 | Campo descripción multilínea de 3 líneas. |
+| 375-383 | Genera opciones de prioridad: valor numérico y texto `"P1 · Importante y urgente (Hazlo ahora)"`. |
+| 379-383 | Selector de prioridad, con `"1"` por defecto. |
+| 385-392 | Carga deadlines y crea opciones; la primera es `("", "Sin proyecto")`. |
+| 394-397 | `fecha_holder` y `selector_fecha`: en tareas nuevas la fecha inicial es `date.today()`; al editar se usa `tarea.fecha`. |
+| 399-425 | `guardar`: lee los campos (incluida `fecha_holder["valor"]`), convierte prioridad y deadline, llama a `editar` o `crear`, captura `CaosError` y cierra el diálogo si todo va bien. |
+| 427-452 | Muestra el `AlertDialog` con los campos (incluido `campo_fecha`) y los botones Cancelar/Guardar. |
+
+**Detalle de la fecha por defecto (líneas 394-396):** `{"valor": tarea.fecha if tarea else date.today()}`. Así toda tarea nueva nace con la fecha de hoy y aparece de inmediato en la vista diaria; al editar nunca se pisa la fecha que ya tenía.
 
 **Detalle de `deadline_id = campo_deadline.value or None`:** el desplegable usa `""` para "sin proyecto". Al convertir a `None`, la entidad guarda `NULL` en SQLite.
+
+**Detalle de `fecha = fecha_holder["valor"]`:** `selector_fecha` guarda la fecha elegida en el diccionario `holder`; al guardar se lee de ahí y se pasa a `crear`/`editar`.
 
 **Detalle de `Prioridad.desde(campo_prioridad.value or 1)`:** el valor del dropdown es un string (`"2"`); `desde` lo convierte a enum. Si por alguna razón viene vacío, se usa 1.
 
@@ -1530,7 +1576,7 @@ Es más pequeño que el de tareas porque un deadline no se filtra por otro deadl
 
 ### 8.24 Dominio `deadlines`: casos de uso
 
-#### `src/domains/deadlines/application/deadline_service.py` (147 líneas)
+#### `src/domains/deadlines/application/deadline_service.py` (155 líneas)
 
 **Propósito:** gestionar proyectos y, además, calcular su avance a partir de las tareas vinculadas y desvincular tareas al eliminar.
 
@@ -1544,23 +1590,23 @@ Es más pequeño que el de tareas porque un deadline no se filtra por otro deadl
 | 25-29 | `porcentaje`: 0.0 si no hay tareas; si no, `hechas/total`, limitado a 1.0. |
 | 32-35 | `ResumenDeadline`: agrupa un `Deadline` con su `ProgresoDeadline` para que la vista reciba todo junto. |
 
-##### Clase `DeadlineService` (líneas 38-147)
+##### Clase `DeadlineService` (líneas 39-155)
 
 | Líneas | Explicación |
 |---|---|
-| 39-47 | `__init__`: recibe el repositorio de deadlines, el de tareas y el bus. |
-| 50-66 | `crear`: construye el `Deadline`, guarda, notifica y devuelve. |
-| 68-86 | `editar`: obtiene, actualiza, guarda, notifica y devuelve. |
-| 88-93 | `completar`: si hay transición, guarda y notifica **incluyendo tareas** (porque el progreso mostrado puede cambiar). |
-| 95-100 | `reabrir`: igual. |
-| 102-107 | `alternar`: igual. |
-| 109-116 | `eliminar`: obtiene el deadline; recorre las tareas vinculadas, las desvincula y las guarda; luego hace soft delete del deadline; notifica deadlines y tareas. |
-| 119-120 | `obtener`: helper con `NoEncontrado`. |
-| 122-123 | `listar`: delega. |
-| 125-128 | `progreso(deadline_id)`: lista las tareas del proyecto, cuenta completadas y total. |
-| 130-134 | `resumen()`: recorre todos los deadlines y devuelve una lista de `ResumenDeadline`. |
-| 137-141 | `_obtener`: lanza `NoEncontrado` si no existe. |
-| 143-147 | `_notificar`: publica `DEADLINES_CAMBIADOS`; si se pidió, también `TAREAS_CAMBIADAS`; y siempre `DATOS_CAMBIADOS`. |
+| 40-48 | `__init__`: recibe el repositorio de deadlines, el de tareas y el bus. |
+| 51-67 | `crear`: construye el `Deadline`, guarda, notifica y devuelve. |
+| 69-87 | `editar`: obtiene, actualiza, guarda, notifica y devuelve. |
+| 89-94 | `completar`: si hay transición, guarda y notifica **incluyendo tareas** (porque el progreso mostrado puede cambiar). |
+| 96-101 | `reabrir`: igual. |
+| 103-108 | `alternar`: igual. |
+| 110-118 | `eliminar`: obtiene el deadline; recorre las tareas vinculadas, las desvincula y las guarda; luego hace soft delete del deadline; notifica deadlines y tareas. |
+| 120-121 | `obtener`: helper con `NoEncontrado`. |
+| 123-124 | `listar`: delega. |
+| 126-129 | `progreso(deadline_id)`: lista las tareas del proyecto, cuenta completadas y total. |
+| 131-143 | `resumen(...)`: recorre los deadlines y devuelve `ResumenDeadline`; si se pasa `periodo`, filtra por `fecha_limite` con `dentro(...)` (los proyectos sin fecha quedan fuera). |
+| 145-149 | `_obtener`: lanza `NoEncontrado` si no existe. |
+| 151-155 | `_notificar`: publica `DEADLINES_CAMBIADOS`; si se pidió, también `TAREAS_CAMBIADAS`; y siempre `DATOS_CAMBIADOS`. |
 
 **Por qué `DeadlineService` conoce `TareaRepository`:** el progreso de un proyecto depende de sus tareas. Esta lectura cruza dominios, pero se hace en la **capa de aplicación**, no en el modelo ni en la vista. Es una decisión pragmática: el módulo de deadlines necesita saber cuántas tareas tiene asociadas.
 
@@ -1614,70 +1660,73 @@ ORDER BY completado ASC,
 
 ### 8.26 Dominio `deadlines`: la vista
 
-#### `src/domains/deadlines/presentation/deadlines_view.py` (343 líneas)
+#### `src/domains/deadlines/presentation/deadlines_view.py` (414 líneas)
 
-**Propósito:** listar proyectos con su avance, permitir crear/editar/completar/eliminar y elegir fecha con un calendario.
+**Propósito:** listar proyectos con su avance, permitir crear/editar/completar/eliminar, filtrar por periodo y elegir fecha con un calendario.
 
-##### Constructor (líneas 38-62)
-
-| Líneas | Explicación |
-|---|---|
-| 39-40 | `class DeadlinesView(ft.Column)`; `expand=True`, `spacing=14`, scroll automático. |
-| 41-42 | Guarda el contexto y crea la columna de la lista. |
-| 44-58 | `controls`: encabezado con botón `+` y la lista. |
-| 60-61 | Se suscribe a deadlines y tareas (el avance depende de ambas). |
-| 62 | Primer refresco. |
-
-##### Refresco y tarjeta (líneas 65-194)
+##### Constructor (líneas 44-111)
 
 | Líneas | Explicación |
 |---|---|
-| 65-66 | `_on_cambio`: refresca. |
-| 68-73 | `refrescar`: pide `resumen()`; si falla, registra y usa lista vacía. |
-| 75-83 | Limpia y, si no hay proyectos, muestra estado vacío. |
-| 84-88 | Si hay, crea una tarjeta por cada `ResumenDeadline`. |
-| 90-94 | Actualiza la lista si la página está montada. |
-| 96-97 | `_tarjeta`: calcula `dias` con `dias_restantes()`. |
-| 98-107 | Elige el chip de estado: Completado, Sin fecha, Vencido, Vence hoy o N días restantes. |
-| 109-112 | Metadatos: área, fecha corta (si hay) y estado. |
-| 114-120 | Barra de progreso con el porcentaje; verde si está completado, violeta si no. |
-| 122-180 | Columna con fila superior (checkbox, título, metadatos, editar, eliminar) y fila inferior (barra + "hechas/total"). |
-| 182-192 | Si hay descripción, la inserta en la posición 1 (debajo del título). |
-| 194 | Envuelve todo en `tarjeta(contenido)`. |
+| 45-46 | `class DeadlinesView(ft.Column)`; `expand=True`, `spacing=14`, scroll automático. |
+| 46 | Guarda el contexto. |
+| 47 | `_periodo = Periodo.SEMANAL`: por defecto la vista muestra los proyectos de la semana actual. |
+| 48-49 | `_desde` y `_hasta = None`: sin rango personalizado. |
+| 50 | `_lista`: columna de tarjetas. |
+| 52-54 | `selector_periodo(...)`: menú vertical iniciado en `"semanal"`. |
+| 55-73 | `_texto_rango` y `_barra_rango`: barra para el plazo personalizado. |
+| 76-107 | `controls`: encabezado con botón `+`, fila de periodo (selector + botón de rango), barra de rango y la lista. |
+| 109-110 | Se suscribe a deadlines y tareas (el avance depende de ambas). |
+| 111 | Primer refresco, ya con la vista semanal aplicada. |
 
-**Detalle del chip de vencimiento (líneas 98-107):** el orden importa. Primero se comprueba si está completado (aunque la fecha haya pasado); después si no tiene fecha; después si `dias < 0`; después si `dias == 0`; y si no, los días restantes. Si se comprobara `dias < 0` antes que `completado`, un proyecto terminado aparecería como vencido.
+##### Refresco y tarjeta (líneas 114-314)
 
-**Detalle de `contenido.controls.insert(1, ...)` (líneas 182-192):** la lista original es `[fila_superior, fila_progreso]`; insertar en el índice 1 coloca la descripción entre ambas. Es más simple que reconstruir la columna.
+| Líneas | Explicación |
+|---|---|
+| 114-115 | `_on_cambio`: refresca. |
+| 117-126 | `_cambiar_periodo(valor)`: recibe el valor del menú, limpia el rango, traduce `"todas"` o un valor de `Periodo` a `self._periodo` y refresca. |
+| 128-134 | `_elegir_rango`: abre `abrir_selector_rango` con las fechas actuales. |
+| 136-149 | `_aplicar_rango`: guarda `desde`/`hasta`, desactiva el periodo, pone la etiqueta del menú en "Plazo" y muestra la barra. |
+| 151-158 | `_limpiar_rango`: borra el rango y vuelve a la vista **semanal**. |
+| 160-165 | `_actualizar_filtros_ui`: actualiza la barra de rango si la vista está montada. |
+| 167-214 | `refrescar`: pide `resumen(periodo=..., desde=..., hasta=...)`; si falla, registra y usa lista vacía. Limpia y muestra un estado vacío distinto según haya rango, periodo o ningún filtro. |
+| 216-217 | `_tarjeta`: calcula `dias` con `dias_restantes()`. |
+| 218-227 | Elige el chip de estado: Completado, Sin fecha, Vencido, Vence hoy o N días restantes. |
+| 229-232 | Metadatos: área, fecha corta (si hay) y estado. |
+| 234-240 | Barra de progreso con el porcentaje; verde si está completado, violeta si no. |
+| 242-300 | Columna con fila superior (checkbox, título, metadatos, editar, eliminar) y fila inferior (barra + "hechas/total"). |
+| 302-312 | Si hay descripción, la inserta en la posición 1 (debajo del título). |
+| 314 | Envuelve todo en `tarjeta(contenido)`. |
+
+**Detalle del chip de vencimiento (líneas 129-138):** el orden importa. Primero se comprueba si está completado (aunque la fecha haya pasado); después si no tiene fecha; después si `dias < 0`; después si `dias == 0`; y si no, los días restantes. Si se comprobara `dias < 0` antes que `completado`, un proyecto terminado aparecería como vencido.
+
+**Detalle de `contenido.controls.insert(1, ...)` (líneas 213-223):** la lista original es `[fila_superior, fila_progreso]`; insertar en el índice 1 coloca la descripción entre ambas. Es más simple que reconstruir la columna.
 
 **`ft.ProgressBar`:** `value` debe estar entre 0 y 1. `progreso.porcentaje` ya lo garantiza.
 
-##### Alternar y eliminar (líneas 196-226)
+##### Alternar y eliminar (líneas 316-347)
 
 | Líneas | Explicación |
 |---|---|
-| 196-200 | `_alternar`: llama a `deadlines.alternar`; captura `CaosError` y avisa. |
-| 202-226 | `_eliminar`: diálogo de confirmación; el texto avisa de que las tareas quedarán sueltas; al confirmar, cierra y elimina. |
+| 316-320 | `_alternar`: llama a `deadlines.alternar`; captura `CaosError` y avisa. |
+| 322-347 | `_eliminar`: diálogo de confirmación; el texto avisa de que las tareas quedarán sueltas; al confirmar, cierra y elimina. |
 
 **Por qué no se refresca a mano tras `alternar`:** el servicio publica `DEADLINES_CAMBIADOS` y la propia vista está suscrita, así que se refresca sola. Si se refrescara también a mano, habría dos reconstrucciones innecesarias.
 
-##### Diálogo con selector de fecha (líneas 229-343)
+##### Diálogo con selector de fecha (líneas 349-414)
 
 | Líneas | Explicación |
 |---|---|
-| 230 | `es_edicion`. |
-| 231-238 | Campos título, descripción y área. |
-| 240-242 | `fecha_holder`: diccionario con la fecha seleccionada. Se usa un diccionario porque las funciones internas pueden mutar su contenido sin necesidad de `nonlocal`. |
-| 243-249 | Campo de fecha con `fecha_corta` o vacío; `read_only=True` evita escribir a mano. |
-| 252-273 | `elegir_fecha`: define `al_cambiar` (convierte `datetime` a `date`, guarda en el holder, actualiza el campo) y abre un `DatePicker` con límites 2000–2100. |
-| 275-278 | `quitar_fecha`: pone `None`, vacía el campo y actualiza. |
-| 280-300 | `guardar`: llama a `editar` o `crear`; captura `CaosError`; cierra si todo va bien. |
-| 302-343 | Diálogo con los campos y una fila para la fecha con botones de calendario y borrar. |
+| 350 | `es_edicion`. |
+| 351-358 | Campos título, descripción y área. |
+| 360-362 | `fecha_holder`: diccionario con la fecha seleccionada. Se usa un diccionario porque las funciones internas pueden mutar su contenido sin necesidad de `nonlocal`. |
+| 364-366 | `selector_fecha(...)`: widget compartido que crea el campo de solo lectura y los botones de calendario/borrar, y guarda la elección en `fecha_holder`. |
+| 368-388 | `guardar`: llama a `editar` o `crear`; captura `CaosError`; cierra si todo va bien. |
+| 390-414 | Diálogo con los campos (incluido `campo_fecha`) y los botones Cancelar/Guardar. |
 
-**Por qué `fecha_holder` y no `nonlocal`:** dentro de `guardar` y `al_cambiar` se necesita leer y escribir la fecha. Un diccionario es mutable, así que se puede modificar sin redeclarar. También se podría usar `nonlocal fecha`, pero el diccionario es explícito y funciona igual.
+**Por qué `fecha_holder` y no `nonlocal`:** dentro de `guardar` y de los callbacks del widget se necesita leer y escribir la fecha. Un diccionario es mutable, así que se puede modificar sin redeclarar. También se podría usar `nonlocal fecha`, pero el diccionario es explícito y funciona igual.
 
-**Detalle de `DatePicker` (líneas 263-273):** en Flet 1.x el selector de fecha se muestra con `page.show_dialog`. `on_change` recibe `ev.control.value`, que puede ser `datetime` o `date` según la plataforma; por eso se normaliza con `isinstance(valor, datetime)`.
-
-**Detalle de `first_date`/`last_date`:** limitan el calendario a un rango razonable (2000–2100) y evitan fechas absurdas por error de tecleo.
+**Detalle de `selector_fecha`:** es el mismo widget que usa la vista de tareas (ver 8.13). Internamente muestra el `DatePicker` con `page.show_dialog`, normaliza `datetime` a `date` y limita el calendario a 2000–2100. Reutilizarlo evita duplicar el diálogo de fecha en dos vistas.
 ---
 
 ### 8.27 Dominio `notas`: modelo
@@ -1794,58 +1843,70 @@ if buscar and buscar.strip():
 
 ### 8.31 Dominio `notas`: la vista
 
-#### `src/domains/notas/presentation/notas_view.py` (265 líneas)
+#### `src/domains/notas/presentation/notas_view.py` (323 líneas)
 
-**Propósito:** listar notas, buscarlas en vivo y crear/editar/eliminar.
+**Propósito:** listar notas, buscarlas en vivo y crear/editar/eliminar/ver.
 
-##### Constructor (líneas 39-73)
+##### Helper de acciones (líneas 39-53)
+
+`_accion_nota(icono, tooltip, color, on_click)` devuelve un `IconButton` compacto:
+
+- `icon_size=17`, `padding=0` y `visual_density=ft.VisualDensity.COMPACT`.
+- `size_constraints=ft.BoxConstraints(min_width=34, min_height=34, max_width=34, max_height=34)`.
+
+**Por qué:** en móvil los tres botones estándar (48×48) ocupaban más de 150 px y dejaban el título sin espacio visible. Con 34×34 y `spacing=0` el grupo ocupa ~102 px y los títulos medianamente largos se pueden leer.
+
+##### Constructor (líneas 56-89)
 
 | Líneas | Explicación |
 |---|---|
-| 40-41 | `class NotasView(ft.Column)` con scroll. |
-| 42-43 | Contexto y texto de búsqueda vacío. |
-| 45-50 | Campo de búsqueda con icono de lupa; `on_change` refresca en cada tecla. |
-| 52 | Columna de tarjetas. |
-| 54-69 | Encabezado con botón `+`, campo de búsqueda y lista. |
-| 71-72 | Se suscribe a notas y deadlines. |
-| 73 | Primer refresco. |
+| 57-58 | `class NotasView(ft.Column)` con scroll. |
+| 59-60 | Contexto y texto de búsqueda vacío. |
+| 62-67 | Campo de búsqueda con icono de lupa; `on_change` refresca en cada tecla. |
+| 69 | Columna de tarjetas. |
+| 70-85 | Encabezado con botón `+`, campo de búsqueda y lista. |
+| 87-88 | Se suscribe a notas y deadlines. |
+| 89 | Primer refresco. |
 
 **Búsqueda en vivo:** `on_change` se dispara con cada cambio del `TextField`. El repositorio hace `LIKE`; para pocas notas es instantáneo. Si la lista creciera mucho, convendría un retraso (debounce) para no consultar en cada tecla.
 
-##### Refresco (líneas 76-107)
+##### Refresco (líneas 92-143)
 
 | Líneas | Explicación |
 |---|---|
-| 76-77 | `_on_cambio`: refresca. |
-| 79-81 | `_cambiar_busqueda`: guarda el texto y refresca. |
-| 83-88 | `refrescar`: lista con búsqueda; si falla, registra y usa lista vacía. |
-| 90-98 | Si no hay notas, muestra estado vacío; el título cambia según haya búsqueda o no. |
-| 100-101 | Si hay, construye un diccionario `id → deadline` **una sola vez** y crea las tarjetas. |
-| 103-107 | Actualiza si la página está montada. |
+| 92-93 | `_on_cambio`: refresca. |
+| 95-111 | `_ver`: abre un `AlertDialog` con el contenido completo en `ft.Markdown` y un botón "Salir". |
+| 113-115 | `_cambiar_busqueda`: guarda el texto y refresca. |
+| 117-143 | `refrescar`: lista con búsqueda; si falla, registra y usa lista vacía. Si no hay notas, muestra estado vacío; si hay, construye un diccionario `id → deadline` **una sola vez** y crea las tarjetas. |
 
-**Por qué el diccionario de deadlines (línea 100):** sin él, cada tarjeta recorrería la lista completa de proyectos para encontrar el suyo (O(n×m)). Con el diccionario, cada búsqueda es O(1). Es una optimización sencilla y didáctica.
+**Por qué el diccionario de deadlines (línea 135):** sin él, cada tarjeta recorrería la lista completa de proyectos para encontrar el suyo (O(n×m)). Con el diccionario, cada búsqueda es O(1). Es una optimización sencilla y didáctica.
 
-##### Tarjeta (líneas 109-173)
+##### Tarjeta (líneas 145-224)
 
 | Líneas | Explicación |
 |---|---|
-| 110-112 | Metadatos empiezan con el área. |
-| 113-120 | Si la nota tiene deadline y existe, añade un chip con su título. |
-| 121-123 | Añade el texto "hace cuánto" se editó. |
-| 125-173 | Tarjeta con fila principal (título + resumen + botones) y fila de metadatos con wrap. |
+| 146-148 | Metadatos empiezan con el área. |
+| 149-156 | Si la nota tiene deadline y existe, añade un chip con su título. |
+| 157-159 | Añade el texto "hace cuánto" se editó. |
+| 165-168 | Fila principal con `spacing=4`: título/resumen a la izquierda y el grupo de acciones a la derecha. |
+| 190-192 | Grupo de acciones con `spacing=0` y `tight=True`: editar, eliminar y ver van pegados. |
+| 195-213 | Cada acción se construye con `_accion_nota(...)`, por lo que mide 34×34 en lugar de 48×48. |
+| 221 | Fila de metadatos con wrap y `run_spacing=4`. |
 
-**Detalle de la condición `nota.deadline_id in deadlines` (línea 113):** si el proyecto fue eliminado, la nota podría conservar el id. El diccionario solo contiene proyectos visibles, así que simplemente no se muestra el chip. No se rompe nada.
+**Por qué el título tiene `expand=True` (línea 170):** la columna del título ocupa todo el ancho restante después de las acciones. Al reducir los botones, el texto gana espacio y puede mostrar más caracteres antes de la elipsis.
 
-**`nota.resumen` vs `nota.contenido`:** la tarjeta muestra el resumen recortado; el diálogo muestra el contenido completo.
+**Detalle de la condición `nota.deadline_id in deadlines` (línea 149):** si el proyecto fue eliminado, la nota podría conservar el id. El diccionario solo contiene proyectos visibles, así que simplemente no se muestra el chip. No se rompe nada.
 
-##### Eliminar y diálogo (líneas 175-265)
+**`nota.resumen` vs `nota.contenido`:** la tarjeta muestra el resumen recortado; el diálogo `_ver` muestra el contenido completo en Markdown.
+
+##### Eliminar y diálogo (líneas 226-323)
 
 | Líneas | Explicación |
 |---|---|
-| 175-197 | `_eliminar`: confirmación y soft delete. |
-| 200-216 | `_abrir_dialogo`: campos título, área, contenido multilínea (8 líneas) y selector de proyecto. |
-| 218-238 | `guardar`: crea o edita; captura `CaosError`; cierra si va bien. |
-| 240-265 | Diálogo con `scroll=ft.ScrollMode.AUTO` para que el contenido largo no desborde. |
+| 226-251 | `_eliminar`: confirmación y soft delete. |
+| 253-269 | `_abrir_dialogo`: campos título, área, contenido multilínea (8 líneas) y selector de proyecto. |
+| 271-291 | `guardar`: crea o edita; captura `CaosError`; cierra si va bien. |
+| 293-323 | Diálogo con `scroll=ft.ScrollMode.AUTO` para que el contenido largo no desborde. |
 
 **Detalle de `scroll` en el diálogo (línea 247):** una nota puede tener mucho texto. Sin scroll, el diálogo crecería más que la pantalla y los botones quedarían inaccesibles en móvil.
 
@@ -1880,43 +1941,50 @@ if buscar and buscar.strip():
 
 ---
 
-### 8.33 `tests/test_tarea_model.py` — reglas del modelo (13 pruebas)
+### 8.33 `tests/test_tarea_model.py` — reglas del modelo (17 pruebas)
 
 | Líneas | Prueba | Qué demuestra |
 |---|---|---|
-| 14-16 | `test_id_es_uuid_v4_generado_en_la_app` | `UUID(tarea.id).version == 4`; el id se genera localmente. |
-| 19-21 | `test_titulo_se_normaliza` | Los espacios repetidos se colapsan. |
-| 24-26 | `test_titulo_vacio_es_invalido` | Un título de solo espacios lanza `ErrorDeValidacion`. |
-| 29-31 | `test_titulo_demasiado_largo_es_invalido` | 121 caracteres se rechazan. |
-| 34-36 | `test_prioridad_por_defecto_es_eisenhower_1` | Sin prioridad, se usa P1. |
-| 39-41 | `test_prioridad_invalida_es_rechazada` | `prioridad=9` lanza error. |
-| 44-46 | `test_prioridad_se_convierte_desde_entero_y_texto` | `desde(2)` y `desde("4")` funcionan. |
-| 49-61 | `test_completar_y_reabrir_gestionan_estado_y_sincronizacion` | Las transiciones son idempotentes y `synced` vuelve a `False`. |
-| 64-67 | `test_alternar_devuelve_el_nuevo_estado` | `alternar` devuelve el estado resultante. |
-| 70-82 | `test_actualizar_valida_y_normaliza` | Actualizar valida, normaliza y marca pendiente. |
-| 85-89 | `test_actualizar_sin_cambios_no_toca_updated_at` | Si el valor es igual, no hay escritura ni cambio de fecha. |
-| 92-100 | `test_vincular_y_desvincular_deadline` | Los atajos de vínculo funcionan. |
-| 103-110 | `test_borrado_logico_es_idempotente` | Marcar dos veces no cambia la fecha. |
+| 16-18 | `test_id_es_uuid_v4_generado_en_la_app` | `UUID(tarea.id).version == 4`; el id se genera localmente. |
+| 21-23 | `test_titulo_se_normaliza` | Los espacios repetidos se colapsan. |
+| 26-28 | `test_titulo_vacio_es_invalido` | Un título de solo espacios lanza `ErrorDeValidacion`. |
+| 31-33 | `test_titulo_demasiado_largo_es_invalido` | 121 caracteres se rechazan. |
+| 36-38 | `test_prioridad_por_defecto_es_eisenhower_1` | Sin prioridad, se usa P1. |
+| 41-43 | `test_prioridad_invalida_es_rechazada` | `prioridad=9` lanza error. |
+| 46-48 | `test_prioridad_se_convierte_desde_entero_y_texto` | `desde(2)` y `desde("4")` funcionan. |
+| 51-63 | `test_completar_y_reabrir_gestionan_estado_y_sincronizacion` | Las transiciones son idempotentes y `synced` vuelve a `False`. |
+| 66-69 | `test_alternar_devuelve_el_nuevo_estado` | `alternar` devuelve el estado resultante. |
+| 72-84 | `test_actualizar_valida_y_normaliza` | Actualizar valida, normaliza y marca pendiente. |
+| 87-91 | `test_actualizar_sin_cambios_no_toca_updated_at` | Si el valor es igual, no hay escritura ni cambio de fecha. |
+| 94-102 | `test_vincular_y_desvincular_deadline` | Los atajos de vínculo funcionan. |
+| 105-112 | `test_borrado_logico_es_idempotente` | Marcar dos veces no cambia la fecha. |
+| 115-117 | `test_fecha_iso_se_convierte` | Un string `"2026-12-24"` se convierte a `date`. |
+| 120-124 | `test_actualizar_fecha_marca_sincronizacion` | Cambiar `fecha` pone `synced=False`. |
+| 127-129 | `test_en_periodo_sin_fecha_siempre_falso` | Una tarea sin fecha nunca entra en un periodo. |
+| 132-135 | `test_en_periodo_detecta_el_dia` | `en_periodo(DIARIO, ...)` compara con la fecha de la tarea. |
 
 **Qué NO prueban estas pruebas:** no tocan SQLite ni Flet. Son pruebas puras del modelo, rápidas y deterministas.
 
 ---
 
-### 8.34 `tests/test_tarea_service.py` — casos de uso (11 pruebas)
+### 8.34 `tests/test_tarea_service.py` — casos de uso (14 pruebas)
 
 | Líneas | Prueba | Qué demuestra |
 |---|---|---|
-| 17-26 | `test_crear_publica_eventos_y_persiste` | Se guarda y se publican `TAREAS_CAMBIADAS` y `DATOS_CAMBIADOS`, en ese orden. |
-| 29-35 | `test_completar_es_idempotente_y_persiste` | Completar dos veces no rompe y el estado queda guardado. |
-| 38-40 | `test_reabrir_una_tarea_pendiente_no_falla` | Reabrir algo ya pendiente es seguro. |
-| 43-46 | `test_alternar` | Alterna en ambos sentidos. |
-| 49-56 | `test_editar_campos_parciales` | Editar solo el título conserva prioridad y descripción. |
-| 59-67 | `test_editar_permite_vincular_y_desvincular_deadline` | `deadline_id` se puede poner y quitar. |
-| 70-78 | `test_eliminar_usa_borrado_logico` | La tarea desaparece de `listar` pero sigue pendiente de sync con `deleted=True`. |
-| 81-87 | `test_operar_sobre_id_inexistente_lanza_no_encontrado` | Los tres comandos lanzan `NoEncontrado`. |
-| 90-102 | `test_progreso_diario` | 1 completada, 2 pendientes, 3 totales, 33 %. |
-| 105-108 | `test_progreso_sin_tareas_es_cero` | Sin tareas, 0 % y "0 de 0 hoy". |
-| 111-121 | `test_progreso_ignora_tareas_completadas_otro_dia` | Modifica `updated_at` a 2020 y comprueba que no cuenta para hoy. |
+| 18-27 | `test_crear_publica_eventos_y_persiste` | Se guarda y se publican `TAREAS_CAMBIADAS` y `DATOS_CAMBIADOS`, en ese orden. |
+| 30-36 | `test_completar_es_idempotente_y_persiste` | Completar dos veces no rompe y el estado queda guardado. |
+| 39-41 | `test_reabrir_una_tarea_pendiente_no_falla` | Reabrir algo ya pendiente es seguro. |
+| 44-47 | `test_alternar` | Alterna en ambos sentidos. |
+| 50-57 | `test_editar_campos_parciales` | Editar solo el título conserva prioridad y descripción. |
+| 60-68 | `test_editar_permite_vincular_y_desvincular_deadline` | `deadline_id` se puede poner y quitar. |
+| 71-79 | `test_eliminar_usa_borrado_logico` | La tarea desaparece de `listar` pero sigue pendiente de sync con `deleted=True`. |
+| 82-88 | `test_operar_sobre_id_inexistente_lanza_no_encontrado` | Los tres comandos lanzan `NoEncontrado`. |
+| 91-103 | `test_progreso_diario` | 1 completada, 2 pendientes, 3 totales, 33 %. |
+| 106-109 | `test_progreso_sin_tareas_es_cero` | Sin tareas, 0 % y "0 de 0 hoy". |
+| 112-122 | `test_progreso_ignora_tareas_completadas_otro_dia` | Modifica `updated_at` a 2020 y comprueba que no cuenta para hoy. |
+| 125-131 | `test_crear_con_fecha_y_editar_fecha` | Crear con `fecha` y quitarla con `editar(fecha=None)`. |
+| 133-147 | `test_listar_filtra_por_periodo` | Diario/semanal/mensual con una fecha fija; las tareas sin fecha quedan fuera. |
+| 149-152 | `test_listar_sin_periodo_devuelve_todas` | Sin `periodo`, aparecen todas. |
 
 **Detalle de la última prueba (líneas 114-118):** accede a `tareas._repo._db` para modificar la fecha directamente. Es una prueba de integración que necesita saltarse la API para simular un dato antiguo. En código de producción no se debe tocar `_db`.
 
@@ -1924,20 +1992,22 @@ if buscar and buscar.strip():
 
 ---
 
-### 8.35 `tests/test_deadlines.py` — proyectos (10 pruebas)
+### 8.35 `tests/test_deadlines.py` — proyectos (12 pruebas)
 
 | Líneas | Prueba | Qué demuestra |
 |---|---|---|
-| 16-25 | `test_dias_restantes_y_vencimiento` | Fechas futuras, pasadas y ausentes. |
-| 28-32 | `test_un_proyecto_completado_no_se_considera_vencido` | Completado gana sobre vencido. |
-| 35-37 | `test_fecha_iso_se_convierte` | Un string ISO se convierte a `date`. |
-| 40-42 | `test_titulo_vacio_es_invalido` | Validación compartida. |
-| 45-59 | `test_crear_y_editar_deadline` | Crear, editar y quitar fecha. |
-| 62-73 | `test_progreso_de_un_deadline` | 0/2 y luego 1/2 con 50 %. |
-| 76-84 | `test_resumen_incluye_progreso` | El resumen agrupa deadline + progreso. |
-| 87-94 | `test_eliminar_deadline_desvincula_tareas` | La tarea queda con `deadline_id=None`. |
-| 97-100 | `test_completar_deadline` | Completar y reabrir. |
-| 103-107 | `test_operar_sobre_deadline_inexistente` | `NoEncontrado`. |
+| 17-26 | `test_dias_restantes_y_vencimiento` | Fechas futuras, pasadas y ausentes. |
+| 29-33 | `test_un_proyecto_completado_no_se_considera_vencido` | Completado gana sobre vencido. |
+| 36-38 | `test_fecha_iso_se_convierte` | Un string ISO se convierte a `date`. |
+| 41-43 | `test_titulo_vacio_es_invalido` | Validación compartida. |
+| 46-60 | `test_crear_y_editar_deadline` | Crear, editar y quitar fecha. |
+| 63-74 | `test_progreso_de_un_deadline` | 0/2 y luego 1/2 con 50 %. |
+| 77-85 | `test_resumen_incluye_progreso` | El resumen agrupa deadline + progreso. |
+| 88-95 | `test_eliminar_deadline_desvincula_tareas` | La tarea queda con `deadline_id=None`. |
+| 98-101 | `test_completar_deadline` | Completar y reabrir. |
+| 104-108 | `test_operar_sobre_deadline_inexistente` | `NoEncontrado`. |
+| 111-125 | `test_resumen_filtra_por_periodo` | Diario/semanal/mensual por `fecha_limite`; los sin fecha quedan fuera. |
+| 127-130 | `test_resumen_sin_periodo_devuelve_todos` | Sin `periodo`, aparecen todos. |
 
 **Fecha fija `HOY = date(2026, 11, 5)` (línea 13):** las pruebas de días restantes usan una fecha fija para no depender del día real en que se ejecutan. Es una buena práctica: una prueba no debe cambiar de resultado según el calendario.
 
@@ -1957,24 +2027,25 @@ if buscar and buscar.strip():
 
 ---
 
-### 8.37 `tests/test_repositories.py` — persistencia (8 pruebas)
+### 8.37 `tests/test_repositories.py` — persistencia (9 pruebas)
 
 | Líneas | Prueba | Qué demuestra |
 |---|---|---|
-| 11-20 | `test_roundtrip_de_tarea` | Guardar y recuperar conserva todos los campos y la fecha. |
-| 23-34 | `test_list_all_filtra_completadas_y_ordena_por_prioridad` | Orden P1, P4, Hecha; filtro de pendientes. |
-| 37-46 | `test_list_by_deadline_incluye_tareas_sueltas` | `deadline_id` real vs `None`. |
-| 49-61 | `test_borrado_logico_oculta_pero_queda_pendiente_de_sync` | `get` devuelve `None`, pero `list_pending` ve la fila borrada. |
-| 64-71 | `test_mark_synced` | Tras marcar, la lista de pendientes queda vacía y `synced=True`. |
-| 74-82 | `test_repositorio_deadlines_roundtrip_y_orden` | Orden por fecha y recuperación de fecha. |
-| 85-91 | `test_repositorio_notas_busca_por_titulo_contenido_y_area` | Los tres campos participan en la búsqueda. |
-| 94-100 | `test_eliminar_nota_es_borrado_logico` | Borrado lógico de notas. |
+| 13-21 | `test_roundtrip_de_tarea` | Guardar y recuperar conserva todos los campos y la fecha. |
+| 25-32 | `test_roundtrip_de_fecha_de_tarea` | La columna `fecha` vuelve como `date` o `None`. |
+| 35-47 | `test_list_all_filtra_completadas_y_ordena_por_prioridad` | Orden P1, P4, Hecha; filtro de pendientes. |
+| 49-59 | `test_list_by_deadline_incluye_tareas_sueltas` | `deadline_id` real vs `None`. |
+| 61-74 | `test_borrado_logico_oculta_pero_queda_pendiente_de_sync` | `get` devuelve `None`, pero `list_pending` ve la fila borrada. |
+| 76-84 | `test_mark_synced` | Tras marcar, la lista de pendientes queda vacía y `synced=True`. |
+| 86-95 | `test_repositorio_deadlines_roundtrip_y_orden` | Orden por fecha y recuperación de fecha. |
+| 97-104 | `test_repositorio_notas_busca_por_titulo_contenido_y_area` | Los tres campos participan en la búsqueda. |
+| 106-112 | `test_eliminar_nota_es_borrado_logico` | Borrado lógico de notas. |
 
 **La prueba clave es la 49-61:** explica visualmente la diferencia entre "visible para el usuario" (`get`/`list_all` filtran `deleted`) y "pendiente para la nube" (`list_pending` no filtra). Es el corazón del offline-first.
 
 ---
 
-### 8.38 `tests/test_infrastructure.py` — Turso y SQLite (11 pruebas)
+### 8.38 `tests/test_infrastructure.py` — Turso y SQLite (14 pruebas)
 
 | Líneas | Prueba | Qué demuestra |
 |---|---|---|
@@ -1989,6 +2060,7 @@ if buscar and buscar.strip():
 | 170-172 | `test_esquema_creado` | Existen las cuatro tablas (incluida `settings`). |
 | 175-183 | `test_default_db_path_respeta_variables` | Prioridad de `CAOS_DB_PATH` y `FLET_APP_STORAGE_DATA`. |
 | 185-197 | `test_datetime_iso_se_conserva` | Al recuperar, `updated_at` es `datetime` y tiene `tzinfo`. |
+| 198-272 | `test_migracion_*` | Con `_crear_base_antigua` fabrican una base con el esquema previo y comprueban: (1) se añade `fecha` y hereda `created_at`, (2) el backfill corre aunque la columna ya exista (v3→v4), (3) no se pisa una `fecha` ya puesta. `user_version` sube a 4. |
 
 **Cómo se evita la red:** `_SesionFalsa` implementa solo `post`, que devuelve una respuesta prefabricada. `TursoClient` acepta `session=...`, así que no se instancia `requests.Session` real. Es inyección de dependencias aplicada a las pruebas.
 
@@ -1996,7 +2068,7 @@ if buscar and buscar.strip():
 
 ---
 
-### 8.39 `tests/test_sync_service.py` — sincronización (14 pruebas)
+### 8.39 `tests/test_sync_service.py` — sincronización (15 pruebas)
 
 | Líneas | Prueba | Qué demuestra |
 |---|---|---|
@@ -2160,9 +2232,28 @@ if buscar and buscar.strip():
 
 ---
 
+### 8.46 `tests/test_periodos.py` — vistas por periodo (16 pruebas)
+
+**Propósito:** fijar la aritmética de calendario de `rango`/`dentro` con fechas fijas, sin depender del día real.
+
+| Líneas | Prueba | Qué demuestra |
+|---|---|---|
+| 15-16 | `test_diario_es_el_mismo_dia` | El rango diario empieza y acaba en *hoy*. |
+| 19-24 | `test_semanal_va_de_lunes_a_domingo` | Lunes y domingo de la semana ISO de un miércoles. |
+| 27-29 | `test_semanal_en_lunes_no_retrocede_de_semana` | Un lunes ya es el inicio de su propia semana. |
+| 32-35 | `test_mensual_cubre_el_mes_natural` | Del día 1 al último del mes. |
+| 38-41 | `test_mensual_en_diciembre_no_desborda_el_ano` | Diciembre no salta a enero del año siguiente. |
+| 44-47 | `test_mensual_en_febrero_bisiesto` | Febrero de 2024 termina el día 29. |
+| 50-67 | `test_dentro` (parametrizada) | 9 casos: dentro/fuera en cada periodo y `None` nunca entra. |
+| 70-73 | `test_etiquetas` | `etiqueta` devuelve "Diario", "Semanal" y "Mensual". |
+
+**Por qué fechas fijas:** igual que en `test_deadlines.py`, una prueba no debe cambiar de resultado según el día en que se ejecute. `MIERCOLES = date(2026, 11, 4)` es miércoles, así que su semana es 2–8 de noviembre.
+
+---
+
 ## 9. El esquema SQL explicado
 
-El esquema local está en `src/shared/infrastructure/database.py:11-61`. Vamos a leerlo como si fuera la primera vez que ves SQL.
+El esquema local está en `src/shared/infrastructure/database.py:11-65`. Vamos a leerlo como si fuera la primera vez que ves SQL.
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -2213,6 +2304,7 @@ CREATE TABLE IF NOT EXISTS tareas (
     prioridad     INTEGER NOT NULL,
     completada    INTEGER NOT NULL DEFAULT 0,
     deadline_id   TEXT REFERENCES deadlines(id) ON DELETE SET NULL,
+    fecha         TEXT,
     deleted       INTEGER NOT NULL DEFAULT 0,
     synced        INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL,
@@ -2225,6 +2317,7 @@ CREATE TABLE IF NOT EXISTS tareas (
 | `prioridad` | `INTEGER NOT NULL`: 1–4. El modelo valida el rango antes de guardar. |
 | `completada` | 0/1. |
 | `deadline_id` | `NULL` = tarea suelta; si tiene valor, debe existir en `deadlines.id`. `ON DELETE SET NULL` pondría `NULL` si se borrara físicamente el proyecto. |
+| `fecha` | `NULL` o `AAAA-MM-DD`. Alimenta la vista por periodo (diario/semanal/mensual) de la pantalla de tareas. |
 
 ### Tabla `notas`
 
@@ -2265,23 +2358,45 @@ Un **índice** es como el índice de un libro: permite encontrar filas sin recor
 
 **Coste:** cada índice ocupa espacio y hace un poco más lenta la escritura. Para esta app, el beneficio en lectura es mayor.
 
-### `PRAGMA user_version = 1`
+### `PRAGMA user_version` y `Database._migrar()`
 
-Guarda un número de versión del esquema. No se usa todavía, pero es la base para futuras migraciones:
+`PRAGMA user_version` guarda un número de versión del esquema. La base actual está en la **versión 4** (`VERSION_ESQUEMA`). El `SCHEMA` **no** fija la versión: la gestiona `Database._migrar()`, que la lee **antes** de escribirla. Es importante que el `SCHEMA` no la toque, porque `executescript(SCHEMA)` corre antes que `_migrar()`; si lo hiciera, la migración leería siempre la versión nueva y nunca detectaría una base antigua.
+
+`CREATE TABLE IF NOT EXISTS` **no** toca una tabla que ya existe, así que una base creada con una versión anterior no recibiría las columnas nuevas. Por eso `Database.initialize()` llama a `Database._migrar()`, idempotente:
+
+- **v3:** añade la columna `fecha` a `tareas`.
+- **v4:** rellena `fecha` con la fecha de `created_at` (`substr(created_at, 1, 10)`) en las tareas que ya existían, para que hereden su día de creación. No pisa las que ya tengan `fecha`.
 
 ```python
-version = db.query_one("PRAGMA user_version")[0]
-if version < 2:
-    db.execute("ALTER TABLE tareas ADD COLUMN etiquetas TEXT NOT NULL DEFAULT ''")
-    db.execute("PRAGMA user_version = 2")
+version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+columnas = {fila[1] for fila in conn.execute("PRAGMA table_info(tareas)")}
+if "fecha" not in columnas:
+    conn.execute("ALTER TABLE tareas ADD COLUMN fecha TEXT")
+
+if version < 4:
+    conn.execute(
+        "UPDATE tareas SET fecha = substr(created_at, 1, 10) WHERE fecha IS NULL"
+    )
+
+conn.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
 ```
+
+La migración remota de Turso **no** es automática: Turso no admite `ADD COLUMN IF NOT EXISTS`, así que en una base de Turso ya existente hay que ejecutar una vez, desde la consola:
+
+```sql
+ALTER TABLE tareas ADD COLUMN fecha TEXT;
+UPDATE tareas SET fecha = substr(created_at, 1, 10) WHERE fecha IS NULL;
+```
+
+El `ALTER` es no destructivo: las filas existentes quedan con `fecha = NULL` y el `UPDATE` las rellena sin tocar `created_at`/`updated_at`. Una instalación nueva recibe la columna (y sin filas que migrar) porque el esquema remoto (`TURSO_SCHEMA_SENTENCIAS`) ya la incluye.
 
 ### Mapa entidad → tabla
 
 | Entidad | Tabla | Campos propios |
 |---|---|---|
 | `Deadline` | `deadlines` | título, descripción, fecha_límite, área, completado |
-| `Tarea` | `tareas` | título, descripción, prioridad, completada, deadline_id |
+| `Tarea` | `tareas` | título, descripción, prioridad, completada, deadline_id, fecha |
 | `Nota` | `notas` | título, contenido, área, deadline_id |
 | `Entity` (común) | las tres | id, deleted, synced, created_at, updated_at |
 
@@ -2395,7 +2510,9 @@ Ejemplo: añadir `etiquetas` a `Tarea`.
    - añádelo a `actualizar` con `SIN_CAMBIO`.
 2. **Esquema local** (`database.py`):
    - añade la columna al `CREATE TABLE` (para bases nuevas),
-   - y una migración para bases existentes (`ALTER TABLE ... ADD COLUMN`).
+   - añade una migración idempotente para bases existentes (`ALTER TABLE ... ADD COLUMN` dentro de `_migrar`, leyendo `user_version` antes de tocarla),
+   - sube `VERSION_ESQUEMA` y añade un `if version < N:` con el backfill si quieres dar un valor por defecto a las filas antiguas,
+   - migra Turso a mano (el `ALTER` y, si aplica, el `UPDATE` de backfill).
 3. **Repositorio** (`sqlite_tarea_repository.py`):
    - añade la columna a `_COLUMNAS` y al `_UPSERT`,
    - añade el valor en `_params`,
@@ -2411,6 +2528,8 @@ Ejemplo: añadir `etiquetas` a `Tarea`.
    - sync: el parámetro llega en la posición correcta.
 
 > **Cuidado con el orden de los parámetros.** `_params`, el `_UPSERT` y el esquema remoto deben tener exactamente el mismo orden. Un desfase guarda datos en la columna equivocada sin lanzar error. Las pruebas de roundtrip y de sync son tu red de seguridad.
+
+> **Ejemplo real:** este es exactamente el recorrido que se siguió para añadir `fecha` a `Tarea` (versión 3 del esquema) y su backfill desde `created_at` (versión 4): modelo + `actualizar`, columna en `CREATE TABLE` + `_migrar` con `if version < 4`, `_COLUMNAS`/`_UPSERT`/`_params`/`_fila_a_entidad`, esquema remoto + `UPSERT_TAREA` + `SELECT_TAREAS`, `selector_fecha` en el diálogo, y pruebas en modelo, servicio, repositorio, sync y migración. Si añades `fecha_limite` a `Nota`, el camino es el mismo.
 
 ### 11.2 Añadir un dominio nuevo (por ejemplo, `habitos`)
 
@@ -2553,32 +2672,33 @@ Cierra la app y borra `caos_local.db`, `caos_local.db-wal` y `caos_local.db-shm`
 | `src/shared/domain/entity.py` | 20-41 | UUID, fechas, `synced`, `deleted`. |
 | `src/shared/domain/errors.py` | 6-27 | Jerarquía de errores. |
 | `src/shared/domain/value_objects.py` | 12-29 | Título válido. |
+| `src/shared/domain/periodos.py` | 21-63 | Periodo, `rango` y `dentro`. |
 | `src/shared/application/event_bus.py` | 15-40 | Pub/sub. |
 | `src/shared/application/events.py` | 3-16 | Temas, incluido `SYNC_CAMBIADO`. |
 | `src/shared/application/sync_service.py` | 22-140, 194-359 | Esquema, upserts, pull, candado, conflictos y eventos. |
 | `src/shared/application/auto_sync.py` | 29-290 | Bucle, debounce, pasada final, cierre de escritorio, sonda y eventos. |
-| `src/shared/infrastructure/database.py` | 11-66, 69-87, 90-161 | Esquema, ruta y conexión. |
+| `src/shared/infrastructure/database.py` | 11-68, 71-89, 92-190 | Esquema, migración, ruta y conexión. |
 | `src/shared/infrastructure/connectivity.py` | 14-29 | Sonda TCP de Internet. |
 | `src/shared/infrastructure/settings_repository.py` | 14-62 | Credenciales guardadas en el dispositivo. |
 | `src/shared/infrastructure/turso_client.py` | 41-169 | Pipeline HTTP y lectura de filas. |
 | `src/shared/presentation/theme.py` | 20-36 | Tema y ventana. |
-| `src/shared/presentation/widgets.py` | 52-221 | Componentes visuales. |
+| `src/shared/presentation/widgets.py` | 52-382 | Componentes visuales (incluye `selector_fecha`, `selector_periodo` y `actualizar_selector_periodo`). |
 | `src/shared/presentation/effects.py` | 26-91 | Sonido y animación. |
 | `src/shared/presentation/app_context.py` | 28-79 | Composition root. |
 | `src/shared/presentation/shell.py` | 174-213, 216-456 | Navegación, progreso, sync manual y credenciales. |
-| `src/domains/tareas/models/tarea.py` | 24-102 | Reglas de tarea. |
+| `src/domains/tareas/models/tarea.py` | 20-121 | Reglas de tarea, incluida `fecha` y `en_periodo`. |
 | `src/domains/tareas/models/value_objects.py` | 14-58 | Eisenhower. |
-| `src/domains/tareas/application/tarea_service.py` | 45-146 | Casos de uso. |
-| `src/domains/tareas/infrastructure/sqlite_tarea_repository.py` | 18-141 | SQL de tareas. |
-| `src/domains/tareas/presentation/tareas_view.py` | 44-366 | UI de tareas. |
+| `src/domains/tareas/application/tarea_service.py` | 46-162 | Casos de uso y filtro por periodo. |
+| `src/domains/tareas/infrastructure/sqlite_tarea_repository.py` | 18-144 | SQL de tareas. |
+| `src/domains/tareas/presentation/tareas_view.py` | 51-452 | UI de tareas con formulario completo y filtro de periodo. |
 | `src/domains/deadlines/models/deadline.py` | 23-103 | Reglas de proyecto. |
-| `src/domains/deadlines/application/deadline_service.py` | 50-147 | Casos de uso y progreso. |
+| `src/domains/deadlines/application/deadline_service.py` | 51-155 | Casos de uso, progreso y filtro por periodo. |
 | `src/domains/deadlines/infrastructure/sqlite_deadline_repository.py` | 17-129 | SQL de proyectos. |
-| `src/domains/deadlines/presentation/deadlines_view.py` | 68-343 | UI de proyectos. |
+| `src/domains/deadlines/presentation/deadlines_view.py` | 44-414 | UI de proyectos con filtro de periodo. |
 | `src/domains/notas/models/nota.py` | 21-72 | Reglas de nota. |
 | `src/domains/notas/application/nota_service.py` | 18-80 | Casos de uso. |
 | `src/domains/notas/infrastructure/sqlite_nota_repository.py` | 17-131 | SQL de notas. |
-| `src/domains/notas/presentation/notas_view.py` | 40-265 | UI de notas. |
+| `src/domains/notas/presentation/notas_view.py` | 39-323 | UI de notas. |
 | `tests/conftest.py` | 21-61 | Fixtures. |
 | `scripts/capture_ui.py` | 54-241 | Capturas. |
 | `scripts/generate_sound.py` | 13-48 | Sonido. |
@@ -2601,7 +2721,7 @@ En `tareas_view.py`, añade un chip con el área del proyecto vinculado. Pista: 
 
 ### Ejercicio 4: añade un filtro "P1"
 
-En `tareas_view.py`, añade un cuarto segmento al `SegmentedButton` y filtra por `tarea.prioridad is Prioridad.IMPORTANTE_URGENTE`. **Objetivo:** practicar estado de UI y filtrado en memoria.
+En `tareas_view.py`, añade junto al selector de periodo un `ft.PopupMenuButton` con las opciones "Todas / P1" y filtra en memoria por `tarea.prioridad is Prioridad.IMPORTANTE_URGENTE`. **Objetivo:** practicar estado de UI, menús verticales y filtrado en memoria.
 
 ### Ejercicio 5: escribe una prueba nueva
 

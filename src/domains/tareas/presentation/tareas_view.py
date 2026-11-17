@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 import flet as ft
 
@@ -13,6 +14,7 @@ from src.shared.application.events import (
     TAREAS_CAMBIADAS,
 )
 from src.shared.domain.errors import CaosError
+from src.shared.domain.periodos import Periodo
 from src.shared.presentation.app_context import AppContext
 from src.shared.presentation.theme import (
     COLOR_ACENTO,
@@ -25,13 +27,18 @@ from src.shared.presentation.theme import (
     COLOR_TEXTO_SUAVE,
 )
 from src.shared.presentation.widgets import (
+    abrir_selector_rango,
+    actualizar_selector_periodo,
     avisar,
     campo_texto,
     chip,
     encabezado,
     estado_vacio,
+    fecha_corta,
     pill_prioridad,
     selector,
+    selector_fecha,
+    selector_periodo,
     tarjeta,
 )
 
@@ -44,26 +51,36 @@ class TareasView(ft.Column):
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(expand=True, spacing=14, scroll=ft.ScrollMode.AUTO)
         self.ctx = ctx
-        self._filtro = "todas"
+        self._periodo: Periodo | None = Periodo.DIARIO
+        self._desde: date | None = None
+        self._hasta: date | None = None
         self._celebrando = False
 
-        self._input = campo_texto(
-            etiqueta="Nueva tarea",
-            pista="¿Qué tienes que hacer?",
-            on_submit=self._crear_rapida,
-        )
-        self._input.expand = True
-
-        self._filtros = ft.SegmentedButton(
-            segments=[
-                ft.Segment(value="todas", label=ft.Text("Todas")),
-                ft.Segment(value="pendientes", label=ft.Text("Pendientes")),
-                ft.Segment(value="completadas", label=ft.Text("Hechas")),
+        self._selector_periodo = selector_periodo(
+            on_change=self._cambiar_periodo,
+            valor="diario",
+            opciones=[
+                ("todas", "Todas"),
+                ("diario", "Diaria"),
+                ("manana", "Mañana"),
             ],
-            selected=["todas"],
-            allow_empty_selection=False,
-            allow_multiple_selection=False,
-            on_change=self._cambiar_filtro,
+        )
+        self._texto_rango = ft.Text("", size=12, color=COLOR_ACENTO, weight=ft.FontWeight.W_600)
+        self._barra_rango = ft.Row(
+            visible=False,
+            spacing=6,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Icon(ft.Icons.DATE_RANGE, size=14, color=COLOR_ACENTO),
+                self._texto_rango,
+                ft.IconButton(
+                    icon=ft.Icons.CLEAR,
+                    icon_size=15,
+                    tooltip="Quitar plazo",
+                    icon_color=COLOR_TEXTO_SUAVE,
+                    on_click=self._limpiar_rango,
+                ),
+            ],
         )
 
         self._lista = ft.Column(spacing=10)
@@ -74,27 +91,30 @@ class TareasView(ft.Column):
                 "Captura, prioriza y cierra el bucle.",
                 [
                     ft.IconButton(
-                        icon=ft.Icons.TUNE,
-                        tooltip="Crear con detalles",
-                        icon_color=COLOR_TEXTO_SUAVE,
+                        icon=ft.Icons.ADD,
+                        tooltip="Nueva tarea",
+                        icon_color=COLOR_ACENTO,
                         on_click=lambda e: self._abrir_dialogo(),
                     ),
                 ],
             ),
             ft.Row(
                 spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
-                    self._input,
+                    ft.Icon(
+                        ft.Icons.CALENDAR_MONTH, size=16, color=COLOR_TEXTO_SUAVE
+                    ),
+                    self._selector_periodo,
                     ft.IconButton(
-                        icon=ft.Icons.ADD,
-                        tooltip="Añadir tarea",
-                        icon_color=ft.Colors.WHITE,
-                        bgcolor=COLOR_ACENTO,
-                        on_click=self._crear_rapida,
+                        icon=ft.Icons.DATE_RANGE,
+                        tooltip="Elegir plazo de fechas",
+                        icon_color=COLOR_ACENTO,
+                        on_click=self._elegir_rango,
                     ),
                 ],
             ),
-            self._filtros,
+            self._barra_rango,
             self._lista,
         ]
 
@@ -107,24 +127,55 @@ class TareasView(ft.Column):
         if not self._celebrando:
             self.refrescar()
 
-    def _cambiar_filtro(self, e: ft.Event[ft.SegmentedButton]) -> None:
-        seleccion = e.control.selected
-        if seleccion:
-            self._filtro = seleccion[0]
-            self.refrescar()
+    def _cambiar_periodo(self, valor: str) -> None:
+        self._desde = None
+        self._hasta = None
+        self._barra_rango.visible = False
+        if not valor or valor == "todas":
+            self._periodo = None
+        else:
+            self._periodo = Periodo(valor)
+        self._actualizar_filtros_ui()
+        self.refrescar()
 
-    def _crear_rapida(self, _e=None) -> None:
-        texto = (self._input.value or "").strip()
-        if not texto:
-            avisar(self.page, "Escribe un título para la tarea.", error=True)
-            return
+    def _elegir_rango(self, _e) -> None:
+        abrir_selector_rango(
+            self.page,
+            desde=self._desde,
+            hasta=self._hasta,
+            on_rango=self._aplicar_rango,
+        )
+
+    def _aplicar_rango(self, desde: date, hasta: date) -> None:
+        self._desde = desde
+        self._hasta = hasta
+        self._periodo = None
+        actualizar_selector_periodo(self._selector_periodo, "todas", texto="Plazo")
+        texto = (
+            fecha_corta(desde)
+            if desde == hasta
+            else f"{fecha_corta(desde)} – {fecha_corta(hasta)}"
+        )
+        self._texto_rango.value = f"Plazo: {texto}"
+        self._barra_rango.visible = True
+        self._actualizar_filtros_ui()
+        self.refrescar()
+
+    def _limpiar_rango(self, _e=None) -> None:
+        self._desde = None
+        self._hasta = None
+        self._periodo = Periodo.DIARIO
+        actualizar_selector_periodo(self._selector_periodo, "diario")
+        self._barra_rango.visible = False
+        self._actualizar_filtros_ui()
+        self.refrescar()
+
+    def _actualizar_filtros_ui(self) -> None:
         try:
-            self.ctx.tareas.crear(texto, Prioridad.IMPORTANTE_URGENTE)
-        except CaosError as exc:
-            avisar(self.page, str(exc), error=True)
-            return
-        self._input.value = ""
-        self._input.update()
+            if self.page is not None:
+                self._barra_rango.update()
+        except Exception:  # pragma: no cover
+            pass
 
     def _alternar(self, tarea: Tarea, valor: bool, contenedor: ft.Container) -> None:
         self._celebrando = True
@@ -179,25 +230,42 @@ class TareasView(ft.Column):
     # -------------------------------------------------------------- render
     def refrescar(self) -> None:
         try:
-            tareas = self.ctx.tareas.listar(incluir_completadas=True)
+            tareas = self.ctx.tareas.listar(
+                incluir_completadas=True,
+                periodo=self._periodo,
+                desde=self._desde,
+                hasta=self._hasta,
+            )
         except Exception:  # pragma: no cover - defensa ante DB bloqueada
             logger.exception("No se pudieron cargar las tareas")
             tareas = []
 
-        if self._filtro == "pendientes":
-            tareas = [t for t in tareas if not t.completada]
-        elif self._filtro == "completadas":
-            tareas = [t for t in tareas if t.completada]
-
         self._lista.controls.clear()
         if not tareas:
-            mensajes = {
-                "todas": (ft.Icons.TASK_ALT, "Todo despejado", "Crea tu primera tarea con el campo de arriba."),
-                "pendientes": (ft.Icons.CELEBRATION, "Sin pendientes", "Has cerrado todos los bucles. Disfrútalo."),
-                "completadas": (ft.Icons.HISTORY, "Nada completado aún", "Marca una tarea y aparecerá aquí."),
-            }
-            icono, titulo, subtitulo = mensajes[self._filtro]
-            self._lista.controls.append(estado_vacio(icono, titulo, subtitulo))
+            if self._desde is not None or self._hasta is not None:
+                self._lista.controls.append(
+                    estado_vacio(
+                        ft.Icons.EVENT_BUSY,
+                        "Sin tareas en este plazo",
+                        "Asigna una fecha a tus tareas o cambia el rango.",
+                    )
+                )
+            elif self._periodo is not None:
+                self._lista.controls.append(
+                    estado_vacio(
+                        ft.Icons.EVENT_BUSY,
+                        f"Sin tareas en vista {self._periodo.etiqueta.lower()}",
+                        "Asigna una fecha a tus tareas o cambia el periodo.",
+                    )
+                )
+            else:
+                self._lista.controls.append(
+                    estado_vacio(
+                        ft.Icons.TASK_ALT,
+                        "Todo despejado",
+                        "Crea tu primera tarea con el botón +.",
+                    )
+                )
         else:
             self._lista.controls.extend(self._tarjeta(t) for t in tareas)
 
@@ -243,6 +311,10 @@ class TareasView(ft.Column):
                 metadatos.append(
                     chip(deadline.titulo, icono=ft.Icons.FOLDER_OUTLINED, color=COLOR_ACENTO_2)
                 )
+        if tarea.fecha:
+            metadatos.append(
+                chip(fecha_corta(tarea.fecha), icono=ft.Icons.EVENT, color=COLOR_TEXTO_SUAVE)
+            )
 
         detalle = [
             titulo,
@@ -319,11 +391,17 @@ class TareasView(ft.Column):
             valor=(tarea.deadline_id or "") if tarea else "",
         )
 
+        fecha_holder: dict[str, object] = {
+            "valor": tarea.fecha if tarea else date.today()
+        }
+        campo_fecha = selector_fecha(self.page, etiqueta="Fecha", holder=fecha_holder)
+
         def guardar(_e) -> None:
             try:
                 titulo = campo_titulo.value or ""
                 prioridad = Prioridad.desde(campo_prioridad.value or 1)
                 deadline_id = campo_deadline.value or None
+                fecha = fecha_holder["valor"]
                 if es_edicion:
                     self.ctx.tareas.editar(
                         tarea.id,
@@ -331,6 +409,7 @@ class TareasView(ft.Column):
                         descripcion=campo_desc.value or "",
                         prioridad=prioridad,
                         deadline_id=deadline_id,
+                        fecha=fecha,
                     )
                 else:
                     self.ctx.tareas.crear(
@@ -338,6 +417,7 @@ class TareasView(ft.Column):
                         prioridad,
                         descripcion=campo_desc.value or "",
                         deadline_id=deadline_id,
+                        fecha=fecha,
                     )
             except CaosError as exc:
                 avisar(self.page, str(exc), error=True)
@@ -351,7 +431,13 @@ class TareasView(ft.Column):
                     tight=True,
                     spacing=12,
                     width=340,
-                    controls=[campo_titulo, campo_desc, campo_prioridad, campo_deadline],
+                    controls=[
+                        campo_titulo,
+                        campo_desc,
+                        campo_prioridad,
+                        campo_deadline,
+                        campo_fecha,
+                    ],
                 ),
                 actions=[
                     ft.TextButton("Cancelar", on_click=lambda e: self.page.pop_dialog()),

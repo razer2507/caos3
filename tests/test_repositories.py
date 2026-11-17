@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from src.domains.deadlines.models.deadline import Deadline
 from src.domains.notas.models.nota import Nota
 from src.domains.tareas.models.tarea import Tarea
@@ -18,6 +20,16 @@ def test_roundtrip_de_tarea(tareas_repo):
     assert recuperada.titulo == "Persistirme"
     assert recuperada.prioridad is Prioridad.NO_IMPORTANTE_URGENTE
     assert recuperada.created_at == tarea.created_at
+
+
+def test_roundtrip_de_fecha_de_tarea(tareas_repo):
+    con_fecha = Tarea(titulo="Con fecha", fecha=date(2026, 11, 5))
+    sin_fecha = Tarea(titulo="Sin fecha")
+    tareas_repo.add(con_fecha)
+    tareas_repo.add(sin_fecha)
+
+    assert tareas_repo.get(con_fecha.id).fecha == date(2026, 11, 5)
+    assert tareas_repo.get(sin_fecha.id).fecha is None
 
 
 def test_list_all_filtra_completadas_y_ordena_por_prioridad(tareas_repo):

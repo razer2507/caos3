@@ -42,6 +42,7 @@ TURSO_SCHEMA_SENTENCIAS: tuple[str, ...] = (
         prioridad     INTEGER NOT NULL,
         completada    INTEGER NOT NULL DEFAULT 0,
         deadline_id   TEXT,
+        fecha         TEXT,
         deleted       INTEGER NOT NULL DEFAULT 0,
         synced        INTEGER NOT NULL DEFAULT 0,
         created_at    TEXT NOT NULL,
@@ -77,7 +78,7 @@ FROM deadlines
 """
 
 SELECT_TAREAS = """
-SELECT id, titulo, descripcion, prioridad, completada, deadline_id,
+SELECT id, titulo, descripcion, prioridad, completada, deadline_id, fecha,
        deleted, synced, created_at, updated_at
 FROM tareas
 """
@@ -108,15 +109,16 @@ WHERE excluded.updated_at > deadlines.updated_at
 
 UPSERT_TAREA = """
 INSERT INTO tareas
-    (id, titulo, descripcion, prioridad, completada, deadline_id,
+    (id, titulo, descripcion, prioridad, completada, deadline_id, fecha,
      deleted, synced, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     titulo = excluded.titulo,
     descripcion = excluded.descripcion,
     prioridad = excluded.prioridad,
     completada = excluded.completada,
     deadline_id = excluded.deadline_id,
+    fecha = excluded.fecha,
     deleted = excluded.deleted,
     synced = 1,
     updated_at = excluded.updated_at
@@ -266,6 +268,7 @@ class SyncService:
                         int(t.prioridad),
                         int(t.completada),
                         t.deadline_id,
+                        t.fecha.isoformat() if t.fecha else None,
                         int(t.deleted),
                         t.created_at.isoformat(),
                         t.updated_at.isoformat(),

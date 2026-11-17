@@ -32,6 +32,7 @@ class Effects:
             self._audio = Audio(src=RUTA_SONIDO, volume=0.65)
             # En Flet 1.x los servicios se adjuntan a la vista raíz.
             page.services.append(self._audio)
+            page.update()
         except Exception:  # pragma: no cover - depende de la plataforma
             logger.warning(
                 "Audio no disponible; se usará un pitido del sistema.", exc_info=True

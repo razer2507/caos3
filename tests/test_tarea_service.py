@@ -12,6 +12,7 @@ from src.shared.application.events import (
     TAREAS_CAMBIADAS,
 )
 from src.shared.domain.errors import NoEncontrado
+from src.shared.domain.periodos import Periodo
 
 
 def test_crear_publica_eventos_y_persiste(tareas, tareas_repo, bus):
@@ -119,3 +120,48 @@ def test_progreso_ignora_tareas_completadas_otro_dia(tareas):
 
     progreso = tareas.progreso_diario(hoy=date.today())
     assert progreso.completadas_hoy == 0
+
+
+def test_crear_con_fecha_y_editar_fecha(tareas):
+    tarea = tareas.crear("Con fecha", fecha=date(2026, 11, 5))
+    assert tarea.fecha == date(2026, 11, 5)
+
+    tareas.editar(tarea.id, fecha=None)
+    assert tareas.obtener(tarea.id).fecha is None
+
+
+def test_listar_filtra_por_periodo(tareas):
+    hoy = date(2026, 11, 5)  # jueves
+    dentro = tareas.crear("Del día", fecha=hoy)
+    tareas.crear("De la semana", fecha=date(2026, 11, 3))
+    tareas.crear("De otro mes", fecha=date(2026, 12, 1))
+    tareas.crear("Sin fecha")
+
+    diario = tareas.listar(periodo=Periodo.DIARIO, hoy=hoy)
+    semanal = tareas.listar(periodo=Periodo.SEMANAL, hoy=hoy)
+    mensual = tareas.listar(periodo=Periodo.MENSUAL, hoy=hoy)
+
+    assert [t.id for t in diario] == [dentro.id]
+    assert len(semanal) == 2
+    assert len(mensual) == 2
+
+
+def test_listar_sin_periodo_devuelve_todas(tareas):
+    tareas.crear("Con fecha", fecha=date(2026, 11, 5))
+    tareas.crear("Sin fecha")
+    assert len(tareas.listar()) == 2
+
+
+def test_listar_filtra_por_manana_y_por_rango(tareas):
+    hoy = date(2026, 11, 5)
+    t_hoy = tareas.crear("Hoy", fecha=hoy)
+    t_manana = tareas.crear("Mañana", fecha=date(2026, 11, 6))
+    t_lejos = tareas.crear("Lejos", fecha=date(2026, 11, 15))
+    tareas.crear("Sin fecha")
+
+    assert [t.id for t in tareas.listar(periodo=Periodo.MANANA, hoy=hoy)] == [
+        t_manana.id
+    ]
+    en_plazo = tareas.listar(desde=date(2026, 11, 5), hasta=date(2026, 11, 10))
+    assert {t.id for t in en_plazo} == {t_hoy.id, t_manana.id}
+    assert t_lejos.id not in {t.id for t in en_plazo}

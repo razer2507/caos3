@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Final
 
 from src.domains.tareas.models.value_objects import Prioridad, Titulo
 from src.shared.domain.entity import Entity
+from src.shared.domain.periodos import Periodo, dentro
 
 SIN_CAMBIO: Final = object()
 
@@ -20,6 +22,7 @@ class Tarea(Entity):
     descripcion: str = ""
     completada: bool = False
     deadline_id: str | None = None
+    fecha: date | None = None
 
     def __post_init__(self) -> None:
         self.titulo = Titulo(self.titulo).valor
@@ -28,6 +31,8 @@ class Tarea(Entity):
         self.completada = bool(self.completada)
         if self.deadline_id is not None:
             self.deadline_id = str(self.deadline_id).strip() or None
+        if isinstance(self.fecha, str):
+            self.fecha = date.fromisoformat(self.fecha)
 
     # ------------------------------------------------------------- estado
     def completar(self) -> bool:
@@ -54,6 +59,11 @@ class Tarea(Entity):
             self.completar()
         return self.completada
 
+    # ------------------------------------------------------------- fechas
+    def en_periodo(self, periodo: Periodo, hoy: date | None = None) -> bool:
+        """Indica si la fecha de la tarea cae dentro de la vista por periodo."""
+        return dentro(self.fecha, periodo, hoy)
+
     # ------------------------------------------------------------ edición
     def actualizar(
         self,
@@ -62,6 +72,7 @@ class Tarea(Entity):
         descripcion: str | object = SIN_CAMBIO,
         prioridad: Prioridad | int | str | object = SIN_CAMBIO,
         deadline_id: str | None | object = SIN_CAMBIO,
+        fecha: date | None | object = SIN_CAMBIO,
     ) -> None:
         """Actualiza campos validando las invariantes del dominio."""
         cambios = False
@@ -90,6 +101,14 @@ class Tarea(Entity):
             )
             if nuevo_deadline != self.deadline_id:
                 self.deadline_id = nuevo_deadline
+                cambios = True
+
+        if fecha is not SIN_CAMBIO:
+            nueva_fecha = (
+                date.fromisoformat(fecha) if isinstance(fecha, str) else fecha
+            )
+            if nueva_fecha != self.fecha:
+                self.fecha = nueva_fecha
                 cambios = True
 
         if cambios:

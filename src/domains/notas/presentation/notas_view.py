@@ -36,6 +36,22 @@ from src.shared.presentation.widgets import (
 logger = logging.getLogger(__name__)
 
 
+def _accion_nota(icono, tooltip: str, color: str, on_click) -> ft.IconButton:
+    """Botón compacto para que los títulos largos conserven espacio en móvil."""
+    return ft.IconButton(
+        icon=icono,
+        icon_size=17,
+        tooltip=tooltip,
+        icon_color=color,
+        on_click=on_click,
+        padding=0,
+        visual_density=ft.VisualDensity.COMPACT,
+        size_constraints=ft.BoxConstraints(
+            min_width=34, min_height=34, max_width=34, max_height=34
+        ),
+    )
+
+
 class NotasView(ft.Column):
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(expand=True, spacing=14, scroll=ft.ScrollMode.AUTO)
@@ -76,6 +92,25 @@ class NotasView(ft.Column):
     def _on_cambio(self, _payload=None) -> None:
         self.refrescar()
 
+    def _ver(self, contenido: str,titulo:str = ''):
+        self.page.show_dialog(
+            ft.AlertDialog(
+                title = titulo.upper(),
+                scrollable=True,
+                content=ft.Column(
+                    width=700,
+                    controls=ft.Markdown(
+                        value=contenido,
+                        selectable=True,
+                        soft_line_break=True,
+                        extension_set=ft.Markdown.extension_set.GITHUB_FLAVORED
+                    )
+                ),
+                actions=[ft.TextButton('Salir',on_click= lambda e :self.page.pop_dialog())
+                ]
+            )
+        )
+
     def _cambiar_busqueda(self, e: ft.Event[ft.TextField]) -> None:
         self._busqueda = e.control.value or ""
         self.refrescar()
@@ -98,7 +133,9 @@ class NotasView(ft.Column):
             )
         else:
             deadlines = {d.id: d for d in self.ctx.deadlines.listar()}
-            self._lista.controls.extend(self._tarjeta(n, deadlines) for n in notas)
+            self._lista.controls.extend(
+                self._tarjeta(nota, deadlines) for nota in notas
+            )
 
         try:
             if self.page is not None:
@@ -128,7 +165,7 @@ class NotasView(ft.Column):
                 controls=[
                     ft.Row(
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=6,
+                        spacing=4,
                         controls=[
                             ft.Column(
                                 expand=True,
@@ -151,19 +188,34 @@ class NotasView(ft.Column):
                                     ),
                                 ],
                             ),
-                            ft.IconButton(
-                                icon=ft.Icons.EDIT_OUTLINED,
-                                icon_size=17,
-                                tooltip="Editar",
-                                icon_color=COLOR_TEXTO_SUAVE,
-                                on_click=lambda e, n=nota: self._abrir_dialogo(n),
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.DELETE_OUTLINE,
-                                icon_size=17,
-                                tooltip="Eliminar",
-                                icon_color=ft.Colors.with_opacity(0.6, COLOR_PELIGRO),
-                                on_click=lambda e, n=nota: self._eliminar(n),
+                            ft.Row(
+                                spacing=0,
+                                tight=True,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    _accion_nota(
+                                        ft.Icons.EDIT_OUTLINED,
+                                        "Editar",
+                                        COLOR_TEXTO_SUAVE,
+                                        lambda e, n=nota: self._abrir_dialogo(n),
+                                    ),
+                                    _accion_nota(
+                                        ft.Icons.DELETE_OUTLINE,
+                                        "Eliminar",
+                                        ft.Colors.with_opacity(0.6, COLOR_PELIGRO),
+                                        lambda e, n=nota: self._eliminar(n),
+                                    ),
+                                    _accion_nota(
+                                        ft.Icons.REMOVE_RED_EYE,
+                                        "Ver",
+                                        ft.Colors.with_opacity(
+                                            0.6, COLOR_TEXTO_SUAVE
+                                        ),
+                                        lambda e, nota=nota: self._ver(
+                                            nota.contenido, nota.titulo
+                                        ),
+                                    ),
+                                ],
                             ),
                         ],
                     ),
@@ -185,7 +237,9 @@ class NotasView(ft.Column):
                 title=ft.Text("Eliminar nota"),
                 content=ft.Text(f"¿Eliminar «{nota.titulo}»?"),
                 actions=[
-                    ft.TextButton("Cancelar", on_click=lambda e: self.page.pop_dialog()),
+                    ft.TextButton(
+                        "Cancelar", on_click=lambda e: self.page.pop_dialog()
+                    ),
                     ft.FilledButton(
                         "Eliminar",
                         bgcolor=COLOR_PELIGRO,
@@ -200,12 +254,15 @@ class NotasView(ft.Column):
     def _abrir_dialogo(self, nota: Nota | None = None) -> None:
         es_edicion = nota is not None
         campo_titulo = campo_texto(etiqueta="Título", valor=nota.titulo if nota else "")
-        campo_area = campo_texto(etiqueta="Área", valor=nota.area if nota else "General")
+        campo_area = campo_texto(
+            etiqueta="Área", valor=nota.area if nota else "General"
+        )
         campo_contenido = campo_texto(
             etiqueta="Contenido",
             valor=nota.contenido if nota else "",
             multilinea=True,
             lineas=8,
+            es_nota=True
         )
         opciones_deadline = [("", "Sin proyecto")]
         opciones_deadline += [(d.id, d.titulo) for d in self.ctx.deadlines.listar()]
@@ -243,7 +300,7 @@ class NotasView(ft.Column):
                 content=ft.Column(
                     tight=True,
                     spacing=12,
-                    width=360,
+                    width=700,
                     scroll=ft.ScrollMode.AUTO,
                     controls=[
                         campo_titulo,
@@ -253,7 +310,9 @@ class NotasView(ft.Column):
                     ],
                 ),
                 actions=[
-                    ft.TextButton("Cancelar", on_click=lambda e: self.page.pop_dialog()),
+                    ft.TextButton(
+                        "Cancelar", on_click=lambda e: self.page.pop_dialog()
+                    ),
                     ft.FilledButton(
                         "Guardar",
                         bgcolor=COLOR_ACENTO,

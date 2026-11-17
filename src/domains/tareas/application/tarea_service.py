@@ -11,6 +11,7 @@ from src.domains.tareas.models.value_objects import Prioridad
 from src.shared.application.event_bus import EventBus
 from src.shared.application.events import DATOS_CAMBIADOS, TAREAS_CAMBIADAS
 from src.shared.domain.errors import NoEncontrado
+from src.shared.domain.periodos import Periodo, en_rango
 
 
 @dataclass(frozen=True)
@@ -48,12 +49,14 @@ class TareaService:
         prioridad: Prioridad | int | str = Prioridad.IMPORTANTE_URGENTE,
         descripcion: str = "",
         deadline_id: str | None = None,
+        fecha: date | None = None,
     ) -> Tarea:
         tarea = Tarea(
             titulo=titulo,
             prioridad=Prioridad.desde(prioridad),
             descripcion=descripcion,
             deadline_id=deadline_id,
+            fecha=fecha,
         )
         self._repo.add(tarea)
         self._notificar()
@@ -67,6 +70,7 @@ class TareaService:
         descripcion: str | object = SIN_CAMBIO,
         prioridad: Prioridad | int | str | object = SIN_CAMBIO,
         deadline_id: str | None | object = SIN_CAMBIO,
+        fecha: date | None | object = SIN_CAMBIO,
     ) -> Tarea:
         tarea = self._obtener(tarea_id)
         tarea.actualizar(
@@ -74,6 +78,7 @@ class TareaService:
             descripcion=descripcion,
             prioridad=prioridad,
             deadline_id=deadline_id,
+            fecha=fecha,
         )
         self._repo.update(tarea)
         self._notificar()
@@ -109,8 +114,22 @@ class TareaService:
     def obtener(self, tarea_id: str) -> Tarea:
         return self._obtener(tarea_id)
 
-    def listar(self, *, incluir_completadas: bool = True) -> list[Tarea]:
-        return self._repo.list_all(incluir_completadas=incluir_completadas)
+    def listar(
+        self,
+        *,
+        incluir_completadas: bool = True,
+        periodo: Periodo | None = None,
+        hoy: date | None = None,
+        desde: date | None = None,
+        hasta: date | None = None,
+    ) -> list[Tarea]:
+        """Lista tareas; filtra por ``[desde, hasta]`` o por ``periodo``."""
+        tareas = self._repo.list_all(incluir_completadas=incluir_completadas)
+        if desde is not None or hasta is not None:
+            return [t for t in tareas if en_rango(t.fecha, desde, hasta)]
+        if periodo is None:
+            return tareas
+        return [t for t in tareas if t.en_periodo(periodo, hoy)]
 
     def listar_por_deadline(
         self, deadline_id: str | None, *, incluir_completadas: bool = True

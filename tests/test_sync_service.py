@@ -73,6 +73,7 @@ def _fila_tarea(**cambios) -> dict:
         "prioridad": 1,
         "completada": 0,
         "deadline_id": "d1",
+        "fecha": None,
         "deleted": 0,
         "synced": 1,
         "created_at": ANTES,
@@ -173,8 +174,8 @@ def test_borrado_logico_se_propaga(
     sentencias = cliente.llamadas[-1]
     upsert = next(s for s in sentencias if "INSERT INTO tareas" in s[0])
     params = upsert[1]
-    # Orden: id, titulo, descripcion, prioridad, completada, deadline_id, deleted, ...
-    assert params[6] == 1
+    # Orden: id, titulo, descripcion, prioridad, completada, deadline_id, fecha, deleted, ...
+    assert params[7] == 1
 
 
 def test_sin_configuracion_lanza_error(deadlines_repo, tareas_repo, notas_repo, db):
@@ -309,6 +310,7 @@ def test_upsert_remoto_conserva_la_version_mas_nueva(db):
             1,
             0,
             None,
+            None,
             0,
             ANTES,
             DESPUES,
@@ -322,6 +324,7 @@ def test_upsert_remoto_conserva_la_version_mas_nueva(db):
             "",
             1,
             0,
+            None,
             None,
             0,
             ANTES,

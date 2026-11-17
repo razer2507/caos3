@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS tareas (
     prioridad     INTEGER NOT NULL,
     completada    INTEGER NOT NULL DEFAULT 0,
     deadline_id   TEXT REFERENCES deadlines(id) ON DELETE SET NULL,
+    fecha         TEXT,
     deleted       INTEGER NOT NULL DEFAULT 0,
     synced        INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL,
@@ -61,9 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_tareas_completada ON tareas(completada);
 CREATE INDEX IF NOT EXISTS idx_deadlines_synced  ON deadlines(synced);
 CREATE INDEX IF NOT EXISTS idx_notas_synced      ON notas(synced);
 CREATE INDEX IF NOT EXISTS idx_notas_deadline    ON notas(deadline_id);
-
-PRAGMA user_version = 2;
 """
+
+# Versión actual del esquema local. La gestiona ``Database._migrar``.
+VERSION_ESQUEMA = 4
 
 
 def default_db_path() -> str:
@@ -102,7 +104,34 @@ class Database:
         with self._lock:
             conn = self._conexion()
             conn.executescript(SCHEMA)
+            self._migrar(conn)
             conn.commit()
+
+    @staticmethod
+    def _migrar(conn: sqlite3.Connection) -> None:
+        """Migra bases creadas con versiones anteriores del esquema.
+
+        ``CREATE TABLE IF NOT EXISTS`` no toca una tabla que ya existe, así que
+        una base antigua no recibe las columnas nuevas. Se lee ``user_version``
+        **antes** de tocarla y cada paso es idempotente.
+
+        - v3: añade la columna ``fecha`` a ``tareas``.
+        - v4: rellena ``fecha`` con la fecha de ``created_at`` en las tareas
+          que ya existían (heredan su día de creación).
+        """
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+        columnas = {fila[1] for fila in conn.execute("PRAGMA table_info(tareas)")}
+        if "fecha" not in columnas:
+            conn.execute("ALTER TABLE tareas ADD COLUMN fecha TEXT")
+
+        if version < 4:
+            conn.execute(
+                "UPDATE tareas SET fecha = substr(created_at, 1, 10) "
+                "WHERE fecha IS NULL"
+            )
+
+        conn.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
 
     def _conexion(self) -> sqlite3.Connection:
         if self._conn is None:
